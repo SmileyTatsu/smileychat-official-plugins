@@ -1,0 +1,19 @@
+{
+    "name": "smiley-workspace-tools",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "bun build ./src/index.ts --outdir ./dist --external preact",
+        "typecheck": "tsc --noEmit",
+        "update-types": "bun ./scripts/update-types.ts",
+        "pack": "bun run build && bun ./scripts/pack.ts"
+    },
+    "devDependencies": {
+        "@types/adm-zip": "latest",
+        "adm-zip": "latest",
+        "bun-types": "latest",
+        "preact": "^10.27.2",
+        "typescript": "latest"
+    }
+}

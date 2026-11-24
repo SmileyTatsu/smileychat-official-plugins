@@ -1,0 +1,11 @@
+{
+    "id": "smiley-workspace-tools",
+    "name": "Workspace AI Tools",
+    "version": "1.0.0",
+    "description": "Exposes workspace management actions (Lorebooks, characters, personas, chats) directly to AI models.",
+    "main": "dist/index.js",
+    "permissions": ["tools:register", "actions", "state:read"],
+    "apiVersion": 1,
+    "category": "tools",
+    "enabled": true
+}

@@ -1,0 +1,56 @@
+name: Release artifacts
+
+# One tag builds every plugin and attaches `<id>-<version>.zip` to a single
+# release. The registry points at those asset URLs, so a tag is the moment a
+# plugin becomes installable.
+on:
+    push:
+        tags:
+            - "v*"
+    workflow_dispatch:
+
+permissions:
+    contents: write
+
+jobs:
+    pack:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Build and pack every plugin
+              run: |
+                  set -euo pipefail
+                  shopt -s nullglob
+
+                  for dir in plugins/*/; do
+                      if [ ! -f "$dir/plugin.json" ]; then
+                          continue
+                      fi
+                      echo "::group::$dir"
+                      bun install --cwd "$dir" --frozen-lockfile
+                      bun run --cwd "$dir" pack
+                      echo "::endgroup::"
+                  done
+
+            - name: Collect artifacts
+              run: |
+                  set -euo pipefail
+                  mkdir -p artifacts
+                  shopt -s nullglob
+                  for zip in plugins/*/release/*.zip; do
+                      cp "$zip" artifacts/
+                  done
+                  ls -la artifacts
+
+            - name: Attach artifacts to the release
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: artifacts/*.zip
+                  fail_on_unmatched_files: true
+                  generate_release_notes: true
