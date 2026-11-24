@@ -1,0 +1,23 @@
+import type { PluginManifest } from "../types/smileychat-plugin-api";
+
+export const chatSummarizerManifest: PluginManifest = {
+    id: "smiley-chat-summarizer",
+    name: "Smiley Chat Summarizer",
+    version: "1.0.0",
+    description:
+        "Maintains editable rolling chat summaries and injects them into prompts.",
+    main: "dist/index.js",
+    permissions: [
+        "state:read",
+        "model:generate",
+        "ui:settings",
+        "ui:header",
+        "ui:modals",
+        "ui:styles",
+        "chat:prompt-inject",
+        "presets:macros",
+        "storage",
+    ],
+    apiVersion: 1,
+    category: "memory-lore",
+};

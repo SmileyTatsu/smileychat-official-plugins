@@ -1,0 +1,23 @@
+{
+    "name": "smiley-post-processing",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "bun build ./src/index.tsx --outdir ./dist --external preact",
+        "typecheck": "tsc --noEmit",
+        "test": "bun test",
+        "update-types": "bun ./scripts/update-types.ts",
+        "pack": "bun run build && bun ./scripts/pack.ts"
+    },
+    "dependencies": {
+        "lucide-preact": "^0.545.0"
+    },
+    "devDependencies": {
+        "@types/adm-zip": "latest",
+        "adm-zip": "latest",
+        "bun-types": "latest",
+        "preact": "^10.27.2",
+        "typescript": "latest"
+    }
+}

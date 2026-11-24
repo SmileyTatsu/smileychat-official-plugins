@@ -1,0 +1,61 @@
+import { NotebookText } from "lucide-preact";
+
+import sharedStyles from "./shared-ui.css" with { type: "text" };
+import styles from "./styles.css" with { type: "text" };
+
+import type { SmileyPluginApi } from "../types/smileychat-plugin-api";
+
+import { loadSummarizerSettings, startSummarizerDaemon } from "./daemon";
+import { registerSummaryInjection } from "./injection";
+import { chatSummarizerManifest } from "./manifest";
+import { SummarizerModal } from "./modal";
+import { SummarizerSettingsPanel } from "./settings-panel";
+
+export { chatSummarizerManifest };
+
+export async function activate(api: SmileyPluginApi) {
+    await loadSummarizerSettings(api);
+
+    api.ui.addStyles(styles);
+    api.ui.addStyles(sharedStyles);
+    registerSummaryInjection(api);
+
+    api.ui.registerSettingsPanel({
+        id: "settings",
+        label: "Chat Summarizer",
+        render: ({ snapshot, settings, updateSettings }) => (
+            <SummarizerSettingsPanel
+                api={api}
+                snapshot={snapshot}
+                settings={settings}
+                updateSettings={updateSettings}
+            />
+        ),
+    });
+
+    api.ui.registerHeaderAction({
+        id: "open-summary",
+        label: "Open chat summary",
+        renderIcon: () => <NotebookText size={17} aria-hidden="true" />,
+        run: () => {
+            api.ui.openModal({
+                id: "summary",
+                title: "Chat Summary",
+                render: ({ close, snapshot }) => (
+                    <SummarizerModal api={api} close={close} snapshot={snapshot} />
+                ),
+            });
+        },
+    });
+
+    const stopDaemon = startSummarizerDaemon(api);
+
+    return () => {
+        stopDaemon();
+    };
+}
+
+export const chatSummarizerPlugin = {
+    manifest: chatSummarizerManifest,
+    module: { activate },
+};
