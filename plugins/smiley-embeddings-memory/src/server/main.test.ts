@@ -504,7 +504,7 @@ describe("POST /embed", () => {
             expect(response.status).toBe(409);
             expect(body.error.code).toBe("not-installed");
             // The installer's own text reaches the browser unchanged: it names the device and the fix.
-            expect(body.error.message).toBe("No llama.cpp build installed for cpu. Open the setup and press Install.");
+            expect(body.error.message).toBe("No CPU build of llama.cpp is installed. Open Semantic Memory settings and press Install and test.");
         }
 
         expect(app.host.spawns).toHaveLength(0);
@@ -530,7 +530,7 @@ describe("POST /embed", () => {
 
             expect(response.status).toBe(409);
             expect(body.error.code).toBe("not-installed");
-            expect(body.error.message).toBe("No llama.cpp build installed for cpu. Open the setup and press Install.");
+            expect(body.error.message).toBe("No CPU build of llama.cpp is installed. Open Semantic Memory settings and press Install and test.");
         }
 
         expect(app.host.spawns).toHaveLength(0);

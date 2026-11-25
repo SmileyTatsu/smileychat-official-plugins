@@ -447,7 +447,34 @@ describe("device-aware status", () => {
 });
 
 describe("resolveLaunch refusal text", () => {
-    test("names the device and the next step", async () => {
+    test("names what is missing for each device and the next step", async () => {
+        const modelPath = await writeFileOfSize(join(workDir, "manual.gguf"), 64);
+        const { installer } = harness({ nvidiaSmi: null });
+        const next = "Open Semantic Memory settings and press Install and test.";
+
+        const expected: Record<string, string> = {
+            auto: `The local embedding program is not installed yet. ${next}`,
+            gpu: `No GPU build of llama.cpp is installed. ${next}`,
+            cpu: `No CPU build of llama.cpp is installed. ${next}`,
+        };
+
+        for (const [device, message] of Object.entries(expected)) {
+            const resolved = await installer.resolveLaunch(
+                config({ device: device as "auto" | "gpu" | "cpu", modelPath }),
+            );
+
+            expect(resolved.ok).toBe(false);
+
+            if (resolved.ok) {
+                return;
+            }
+
+            // The server's own message: main.ts must pass it on, not replace it with "model missing".
+            expect(resolved.error).toBe(message);
+        }
+    });
+
+    test("a build for the wrong device still refuses with the device's own text", async () => {
         await installFakeBuild("b12686", "vulkan");
         const modelPath = await writeFileOfSize(join(workDir, "manual.gguf"), 64);
         const { installer } = harness({ nvidiaSmi: CUDA_13 });
@@ -460,8 +487,9 @@ describe("resolveLaunch refusal text", () => {
             return;
         }
 
-        // The server's own message: main.ts must pass it on, not replace it with "model missing".
-        expect(resolved.error).toBe("No llama.cpp build installed for cpu. Open the setup and press Install.");
+        expect(resolved.error).toBe(
+            "No CPU build of llama.cpp is installed. Open Semantic Memory settings and press Install and test.",
+        );
     });
 });
 
@@ -973,7 +1001,7 @@ describe("resolveLaunch", () => {
             return;
         }
 
-        expect(missing.error).toBe("No llama.cpp build installed for gpu. Open the setup and press Install.");
+        expect(missing.error).toBe("No GPU build of llama.cpp is installed. Open Semantic Memory settings and press Install and test.");
     });
 
     test("without an NVIDIA GPU the cuda build is skipped", async () => {

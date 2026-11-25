@@ -19,7 +19,14 @@ import { LOCAL_MODELS } from "../models";
 import { extractArchive } from "./archive";
 import { DownloadError, downloadFile, isAllowedDownloadUrl } from "./download";
 import { parseNvidiaSmi, parseReleases, pickRelease, planBinaries, type Backend, type GpuInfo, type Platform, type Release } from "./releases";
-import type { HostLogger, InstallerStatus, LaunchSpec, ServerConfig, TaskStatus } from "./types";
+import type {
+    DeviceChoice,
+    HostLogger,
+    InstallerStatus,
+    LaunchSpec,
+    ServerConfig,
+    TaskStatus,
+} from "./types";
 
 export type InstallerDeps = {
     /** JSON from an allow-listed host; throws with a clear message on any non-2xx answer. */
@@ -42,8 +49,26 @@ const MAX_WALK_DEPTH = 8;
 
 const MANUAL_BINARY_MESSAGE = "A manual binary path is set; clear it to download one";
 const MANUAL_MODEL_MESSAGE = "A manual model path is set; clear it to download one";
-const NO_BINARY_MESSAGE = (device: string) =>
-    `No llama.cpp build installed for ${device}. Open the setup and press Install.`;
+
+/**
+ * The one not-installed text, shared by /start, /embed (through resolveLaunch) and the setup panel.
+ *
+ * device `auto` gets a sentence that says what is missing in user terms — "no build installed for
+ * auto" described our internal setting, not the user's problem.
+ */
+function noBinaryMessage(device: DeviceChoice): string {
+    const next = "Open Semantic Memory settings and press Install and test.";
+
+    if (device === "gpu") {
+        return `No GPU build of llama.cpp is installed. ${next}`;
+    }
+
+    if (device === "cpu") {
+        return `No CPU build of llama.cpp is installed. ${next}`;
+    }
+
+    return `The local embedding program is not installed yet. ${next}`;
+}
 
 type InstallMarker = {
     tag: string;
@@ -769,7 +794,7 @@ export class Installer {
         const builds = preferBuilds(await this.listBuilds(), config, this.deps.platform, gpu);
 
         if (builds.length === 0) {
-            return { ok: false, error: NO_BINARY_MESSAGE(config.device) };
+            return { ok: false, error: noBinaryMessage(config.device) };
         }
 
         return {
