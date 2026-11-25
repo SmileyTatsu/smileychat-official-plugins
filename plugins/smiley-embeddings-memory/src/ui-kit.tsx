@@ -329,11 +329,32 @@ export function Note({ tone = "info", children }: { tone?: "info" | "warn"; chil
     return <div className={cx("sem-note", `sem-note-${tone}`)}>{children}</div>;
 }
 
-export function ErrorBox({ message, hint }: { message: string; hint?: string }) {
+export function ErrorBox({
+    message,
+    hint,
+    onDismiss,
+}: {
+    message: string;
+    hint?: string;
+    onDismiss?: () => void;
+}) {
     return (
         <div className="sem-error" role="alert">
-            <strong>{message}</strong>
-            {hint ? <span>{hint}</span> : null}
+            <div className="sem-error-body">
+                <strong>{message}</strong>
+                {hint ? <span>{hint}</span> : null}
+            </div>
+            {onDismiss ? (
+                <button
+                    type="button"
+                    className="sem-error-dismiss"
+                    aria-label="Dismiss this message"
+                    title="Dismiss"
+                    onClick={onDismiss}
+                >
+                    <span aria-hidden="true">×</span>
+                </button>
+            ) : null}
         </div>
     );
 }
@@ -664,36 +685,54 @@ export function NumberField({
     step = 1,
     integer = true,
     onCommit,
+    onAuto,
+    autoPlaceholder,
     disabled,
     suffix,
 }: {
     label: string;
     help?: string;
-    value: number;
+    /** `null` means automatic: the input is empty and `autoPlaceholder` explains the value in use. */
+    value: number | null;
     min?: number;
     max?: number;
     step?: number;
     integer?: boolean;
     onCommit: (next: number) => void;
+    /** When set, an `Auto` button appears and an empty input returns to automatic. */
+    onAuto?: () => void;
+    autoPlaceholder?: string;
     disabled?: boolean;
     suffix?: string;
 }) {
     const id = useId();
-    const [text, setText] = useState(String(value));
+    const automatic = value === null;
+    const [text, setText] = useState(automatic ? "" : String(value));
     const [editing, setEditing] = useState(false);
 
     useEffect(() => {
         if (!editing) {
-            setText(String(value));
+            setText(value === null ? "" : String(value));
         }
     }, [value, editing]);
 
     const commit = () => {
         setEditing(false);
+
+        if (text.trim() === "") {
+            if (onAuto) {
+                onAuto();
+            } else {
+                setText(value === null ? "" : String(value));
+            }
+
+            return;
+        }
+
         const parsed = Number(text.replace(",", "."));
 
         if (!Number.isFinite(parsed)) {
-            setText(String(value));
+            setText(value === null ? "" : String(value));
             return;
         }
 
@@ -716,13 +755,16 @@ export function NumberField({
 
     return (
         <Field label={label} help={help} id={id}>
+            <div className="sem-input-row">
             <div className={cx("sem-input-with-unit", suffix && "has-unit")}>
                 <input
                     id={id}
+                    className={cx(automatic && "is-auto")}
                     disabled={disabled}
                     inputMode={integer ? "numeric" : "decimal"}
                     max={max}
                     min={min}
+                    placeholder={automatic ? autoPlaceholder : undefined}
                     step={step}
                     type="number"
                     value={text}
@@ -739,6 +781,26 @@ export function NumberField({
                     }}
                 />
                 {suffix ? <span className="sem-unit">{suffix}</span> : null}
+            </div>
+                {onAuto ? (
+                    <button
+                        type="button"
+                        className="sem-auto-button"
+                        aria-pressed={automatic}
+                        title={
+                            automatic
+                                ? "This field follows the model. Type a number to override it."
+                                : "Clear the override and follow the model again."
+                        }
+                        onClick={() => {
+                            setEditing(false);
+                            setText("");
+                            onAuto();
+                        }}
+                    >
+                        Auto
+                    </button>
+                ) : null}
             </div>
         </Field>
     );

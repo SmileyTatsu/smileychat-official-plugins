@@ -9,12 +9,13 @@
  */
 
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 
 import type { IndexStatus, IndexerProgress, MemoryController } from "./controller";
 import { DEFAULT_QWEN3_TASK, LOCAL_MODELS } from "./models";
 import type { PluginSettings } from "./settings";
-import { serverConfigOf } from "./settings";
+import { effectiveThreshold, serverConfigOf } from "./settings";
+import type { Backend } from "./server/releases";
 import type {
     DeviceChoice,
     GpuBackendChoice,
@@ -52,6 +53,41 @@ type Work = "install" | "test" | "index";
 
 type Failure = { at: Work | "advanced"; parts: ErrorParts };
 
+/** One press of the setup button walks these stages in order. */
+const LOCAL_STAGES = ["config", "binary", "model", "start", "test"] as const;
+type Stage = (typeof LOCAL_STAGES)[number];
+
+const STAGE_TEXT: Record<Stage, string> = {
+    config: "Saving the connection",
+    binary: "Installing llama.cpp for this device",
+    model: "Downloading the model",
+    start: "Starting the local server",
+    test: "Embedding a test sentence",
+};
+
+const POLL_MS = 700;
+const TASK_TIMEOUT_MS = 30 * 60_000;
+const START_TIMEOUT_MS = 150_000;
+
+/** The user pressed Cancel; not a failure, so it must not paint a red box. */
+class ChainCancelled extends Error {}
+
+/** A stage failed for a reason this file can explain, with the fix in `hint`. */
+class ChainError extends Error {
+    readonly hint: string;
+
+    constructor(message: string, hint: string) {
+        super(message);
+        this.hint = hint;
+    }
+}
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function chainParts(error: unknown): ErrorParts {
+    return error instanceof ChainError ? { message: error.message, hint: error.hint } : errorParts(error);
+}
+
 const PREFIX_OPTIONS: Array<{ value: PrefixProfile; label: string }> = [
     { value: "none", label: "None (plain text)" },
     { value: "qwen3", label: "Qwen3 (Instruct / Query)" },
@@ -67,6 +103,12 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
     const [busy, setBusy] = useState<Work | null>(null);
     const [failure, setFailure] = useState<Failure | null>(null);
     const [outcome, setOutcome] = useState<{ dim: number; latencyMs: number } | null>(null);
+    const [stage, setStage] = useState<Stage | null>(null);
+    const [notice, setNotice] = useState<string | null>(null);
+    // A red box about a state that is still true (the server's last error) has to be
+    // dismissible, and a new attempt must not show the error of the previous one.
+    const [hiddenError, setHiddenError] = useState<string | null>(null);
+    const cancelRef = useRef(false);
     // Only the open state is local: whether setup finished is a saved setting, so
     // a reload shows the same state on every device the profile is used on.
     const [setupOpen, setSetupOpen] = useState(!settings.setupComplete);
@@ -108,18 +150,24 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
     }
 
     /**
-     * Step 3 of the wizard. The settings push is debounced, so the config is saved
-     * here first: the installer/launcher must already know which model and backend
-     * were just picked, otherwise it downloads or starts the previous choice.
+     * Step 3 of the wizard. One press runs the whole chain so a beginner never has
+     * to guess how many times to click: save the connection, install the build that
+     * matches the current device, download the model, start the server, self-check.
+     * Stages that are already satisfied are skipped, so pressing the button again
+     * after a failure continues where the chain stopped.
      */
     async function installAndTest() {
         if (busy) {
             return;
         }
 
+        cancelRef.current = false;
         setBusy("install");
         setFailure(null);
         setOutcome(null);
+        setNotice(null);
+        setStage("config");
+        dismissLastError();
 
         try {
             const patch: Partial<PluginSettings> =
@@ -134,42 +182,132 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
             commit(patch);
             await controller.host.saveConfig(serverConfigOf({ ...controller.settings(), ...patch }));
 
-            if (settings.source === "local") {
-                let status = await controller.host.status();
-
-                if (!status.installer.binary.installed) {
-                    await controller.host.installBinary();
-                    status = await controller.host.status();
-
-                    if (!status.installer.binary.installed) {
-                        throw new Error("The llama.cpp binary did not finish installing.");
-                    }
-                }
-
-                if (!status.installer.model.installed) {
-                    await controller.host.downloadModel();
-                    status = await controller.host.status();
-
-                    if (!status.installer.model.installed) {
-                        throw new Error("The model file did not finish downloading.");
-                    }
-                }
-
-                await controller.host.start();
+            if (controller.settings().source === "local") {
+                await ensureBinary();
+                await ensureModel();
+                await startServer();
             }
 
+            setStage("test");
             const result = await controller.test();
 
             setOutcome(result);
-            // The wizard stays collapsed on later visits; the app's settings store
-            // survives reloads and updates, unlike a browser-local flag.
             commit({ setupComplete: true });
+            dismissLastError();
         } catch (error) {
-            setFailure({ at: "install", parts: errorParts(error) });
+            if (error instanceof ChainCancelled) {
+                setNotice("Setup was cancelled. Press the button again to continue from here.");
+            } else {
+                setFailure({ at: "install", parts: chainParts(error) });
+            }
         } finally {
+            setStage(null);
             setBusy(null);
             reloadAll();
         }
+    }
+
+    /** `installed` is device-aware on the server, so this is the only honest check. */
+    async function ensureBinary() {
+        const status = await controller.host.status();
+
+        if (status.installer.binary.installed) {
+            return;
+        }
+
+        setStage("binary");
+        await controller.host.installBinary();
+        await waitForTask("binary");
+    }
+
+    async function ensureModel() {
+        const status = await controller.host.status();
+
+        if (status.installer.model.installed) {
+            return;
+        }
+
+        setStage("model");
+        await controller.host.downloadModel();
+        await waitForTask("model");
+    }
+
+    /**
+     * The install call returns as soon as the download starts, so the chain watches
+     * the task itself; starting a server before the files exist would only fail.
+     */
+    async function waitForTask(kind: "binary" | "model") {
+        const deadline = Date.now() + TASK_TIMEOUT_MS;
+
+        while (Date.now() < deadline) {
+            if (cancelRef.current) {
+                throw new ChainCancelled();
+            }
+
+            await pause(POLL_MS);
+
+            const status = await controller.host.status();
+            const entry = kind === "binary" ? status.installer.binary : status.installer.model;
+
+            if (entry.installed) {
+                return;
+            }
+
+            if (entry.task.state === "cancelled") {
+                throw new ChainCancelled();
+            }
+
+            if (entry.task.state === "error") {
+                throw new ChainError(
+                    kind === "binary" ? "The llama.cpp download failed." : "The model download failed.",
+                    entry.task.error ?? "Check the connection and try again.",
+                );
+            }
+        }
+
+        throw new ChainError(
+            kind === "binary" ? "The llama.cpp download did not finish." : "The model download did not finish.",
+            "Finished parts are kept: press the button again to resume the download.",
+        );
+    }
+
+    async function startServer() {
+        const before = await controller.host.status();
+
+        if (before.process.state === "ready") {
+            return;
+        }
+
+        setStage("start");
+        await controller.host.start();
+
+        const deadline = Date.now() + START_TIMEOUT_MS;
+
+        while (Date.now() < deadline) {
+            if (cancelRef.current) {
+                throw new ChainCancelled();
+            }
+
+            await pause(POLL_MS);
+
+            const status = await controller.host.status();
+
+            if (status.process.state === "ready") {
+                return;
+            }
+
+            if (status.process.state === "error") {
+                throw new ChainError(
+                    "llama-server stopped before it was ready.",
+                    status.process.lastError ?? "Open Diagnostics and read the first error line in the logs.",
+                );
+            }
+        }
+
+        throw new ChainError(
+            "The local server did not become ready.",
+            "A GPU build on an unsupported driver is the usual cause; set Device to CPU and try again.",
+        );
     }
 
     async function runTest(at: "install" | "advanced") {
@@ -180,12 +318,15 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
         setBusy("test");
         setFailure(null);
         setOutcome(null);
+        setNotice(null);
+        dismissLastError();
 
         try {
             const result = await controller.test();
 
             setOutcome(result);
             commit({ setupComplete: true });
+            dismissLastError();
             reloadAll();
         } catch (error) {
             setFailure({ at, parts: errorParts(error) });
@@ -195,17 +336,25 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
     }
 
     async function cancelInstall() {
+        // The chain checks this between polls; the host calls below only make the
+        // download stop in the server as well.
+        cancelRef.current = true;
+
         try {
-            if (installer?.binary.task.state === "running") {
+            const status = await controller.host.status();
+
+            if (status.installer.binary.task.state === "running") {
                 await controller.host.cancelBinary();
             }
 
-            if (installer?.model.task.state === "running") {
+            if (status.installer.model.task.state === "running") {
                 await controller.host.cancelModel();
             }
-        } finally {
-            reloadAll();
+        } catch {
+            // Cancelling is best effort; the chain itself reports the real failure.
         }
+
+        reloadAll();
     }
 
     async function indexChat() {
@@ -215,6 +364,8 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
 
         setBusy("index");
         setFailure(null);
+        setNotice(null);
+        dismissLastError();
 
         try {
             await controller.indexAll();
@@ -233,6 +384,8 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
 
         setBusy("index");
         setFailure(null);
+        setNotice(null);
+        dismissLastError();
 
         try {
             await action();
@@ -249,6 +402,19 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
     const indexChip = index ? describeIndexState(index.state) : null;
     const processChip = process ? describeProcessState(process.state) : null;
     const lastError = index?.lastError ?? process?.lastError;
+    const visibleLastError = lastError && lastError !== hiddenError ? lastError : null;
+    const partInstalled = Boolean(
+        installer && (!installer.binary.installed || !installer.model.installed),
+    );
+    const backendGap = deviceGapText(installer?.binary.installedBackends, settings.device);
+    const autoThreshold = autoThresholdFor(settings, controller);
+    const stages: Stage[] = local ? [...LOCAL_STAGES] : ["config", "test"];
+    const stageIndex = stage ? stages.indexOf(stage) : -1;
+
+    /** Every attempt hides the error it is about to retry, so only new ones appear. */
+    function dismissLastError() {
+        setHiddenError(lastError ?? null);
+    }
 
     return (
         <div className="sem-settings">
@@ -371,7 +537,12 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                     </Note>
                 ) : null}
 
-                {lastError ? <ErrorBox message={lastError} /> : null}
+                {visibleLastError ? (
+                    <ErrorBox
+                        message={visibleLastError}
+                        onDismiss={() => setHiddenError(visibleLastError)}
+                    />
+                ) : null}
             </Section>
 
             <Section
@@ -443,6 +614,9 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                                         ]}
                                     />
                                     <small className="sem-field-help">{DEVICE_HELP[settings.device]}</small>
+                                    {backendGap ? (
+                                        <small className="sem-field-help sem-tone-warn">{backendGap}</small>
+                                    ) : null}
                                 </div>
                             </div>
                         ) : (
@@ -489,6 +663,16 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                         <div className="sem-step">
                             <StepHead n={3} title="Finish setup" hint={local ? "Downloads once, starts llama-server, then embeds a test sentence." : "Sends one test sentence to your endpoint."} />
 
+                            {local && !settings.downloadNoticeAccepted ? (
+                                <ThirdPartyNotice
+                                    settings={settings}
+                                    disabled={busy !== null || !settings.enabled}
+                                    onAccept={() => {
+                                        commit({ downloadNoticeAccepted: true });
+                                        void installAndTest();
+                                    }}
+                                />
+                            ) : (
                             <div className="sem-button-row">
                                 <Button
                                     variant="primary"
@@ -511,13 +695,25 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                                     {busy === "install" || busy === "test"
                                         ? "Working…"
                                         : local
-                                          ? "Install and test"
+                                          ? partInstalled
+                                              ? "Continue setup"
+                                              : "Install and test"
                                           : "Test"}
                                 </Button>
                                 {busy === "install" ? (
                                     <Button onClick={() => void cancelInstall()}>Cancel</Button>
                                 ) : null}
                             </div>
+                            )}
+
+                            {stage ? (
+                                <small className="sem-stage" role="status">
+                                    <span className="sem-stage-step">
+                                        Step {stageIndex + 1} of {stages.length}
+                                    </span>
+                                    <span>{STAGE_TEXT[stage]}…</span>
+                                </small>
+                            ) : null}
 
                             {!settings.enabled ? (
                                 <small className="sem-reason">Turn memory on first.</small>
@@ -543,10 +739,13 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                                 </div>
                             ) : null}
 
+                            {notice ? <Note tone="warn">{notice}</Note> : null}
+
                             {failureAt("install") ? (
                                 <ErrorBox
                                     message={failureAt("install")!.message}
                                     hint={failureAt("install")!.hint}
+                                    onDismiss={() => setFailure(null)}
                                 />
                             ) : null}
                         </div>
@@ -829,6 +1028,9 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                                 max={1}
                                 step={0.05}
                                 integer={false}
+                                autoPlaceholder={`Auto (${autoThreshold.toFixed(2)} for this model)`}
+                                help="Higher keeps only closer matches. Auto uses the value calibrated for the active model."
+                                onAuto={() => commit({ threshold: null })}
                                 onCommit={(threshold) => commit({ threshold })}
                             />
                             <NumberField
@@ -886,6 +1088,33 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                         />
                     </div>
 
+                    {local && partInstalled ? (
+                        <div className="sem-group">
+                            <h6>Program and model files</h6>
+                            {settings.downloadNoticeAccepted ? (
+                                <div className="sem-button-row">
+                                    <Button
+                                        variant="primary"
+                                        disabled={busy !== null}
+                                        onClick={() => void installAndTest()}
+                                    >
+                                        Install and test
+                                    </Button>
+                                    <small className="sem-reason">Only the missing parts are downloaded.</small>
+                                </div>
+                            ) : (
+                                <ThirdPartyNotice
+                                    settings={settings}
+                                    disabled={busy !== null || !settings.enabled}
+                                    onAccept={() => {
+                                        commit({ downloadNoticeAccepted: true });
+                                        void installAndTest();
+                                    }}
+                                />
+                            )}
+                        </div>
+                    ) : null}
+
                     <div className="sem-group">
                         <h6>Maintenance</h6>
                         <div className="sem-button-row">
@@ -937,8 +1166,9 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                         <p className="sem-privacy">
                             With the API source, message text is sent to the endpoint to be embedded, and the
                             API key is stored in plain local JSON in this plugin&apos;s settings. With the local
-                            source, chat text never leaves this device. Downloads come only from GitHub and
-                            Hugging Face.
+                            source, the embedding program runs on this computer, listens on 127.0.0.1 only, and
+                            chat text never leaves this device. Downloads come only from GitHub and Hugging
+                            Face.
                         </p>
                     </div>
                 </div>
@@ -1055,6 +1285,106 @@ function modelCard(id: "default" | "strong"): string {
     const spec = LOCAL_MODELS[id];
 
     return id === "default" ? `${formatBytes(spec.bytes)}, light` : `${formatBytes(spec.bytes)}, needs a GPU`;
+}
+
+/** What the download pulls from Hugging Face, for the consent notice. */
+function downloadTargets(settings: PluginSettings): { repo: string; file: string; bytes?: number } {
+    if (settings.profile === "custom") {
+        return {
+            repo: settings.customModel.repo || "your custom repository",
+            file: settings.customModel.file || "the file you name",
+        };
+    }
+
+    const spec = settings.profile === "strong" ? LOCAL_MODELS.strong : LOCAL_MODELS.default;
+
+    return { repo: spec.repo, file: spec.file, bytes: spec.bytes };
+}
+
+/**
+ * The cut-off retrieval will actually use, so the Advanced field can show it while
+ * the stored value stays `null` (auto).
+ */
+function autoThresholdFor(settings: PluginSettings, controller: MemoryController): number {
+    try {
+        return effectiveThreshold(settings, controller.embedder().model.prefixProfile);
+    } catch {
+        const fallback = settings.source === "local" ? settings.profile === "strong"
+            ? LOCAL_MODELS.strong.prefixProfile
+            : LOCAL_MODELS.default.prefixProfile
+            : settings.api.prefixProfile;
+
+        return effectiveThreshold(settings, fallback);
+    }
+}
+
+const BACKEND_LABELS: Record<Backend, string> = {
+    cpu: "CPU",
+    cuda: "CUDA",
+    vulkan: "Vulkan",
+    metal: "Metal",
+};
+
+/**
+ * The server reports which builds exist, which is not the same as "usable now":
+ * a Vulkan build on a machine asked for CPU still needs a download.
+ */
+function deviceGapText(backends: Backend[] | undefined, device: DeviceChoice): string | null {
+    const usable = backends ?? [];
+
+    if (usable.length === 0) {
+        return null;
+    }
+
+    const listed = usable.map((backend) => BACKEND_LABELS[backend]).join(" and ");
+    const hasGpu = usable.some((backend) => backend !== "cpu");
+
+    if (device === "cpu" && !usable.includes("cpu")) {
+        return `${listed} installed - CPU build missing`;
+    }
+
+    if (device === "gpu" && !hasGpu) {
+        return `${listed} installed - GPU build missing`;
+    }
+
+    return null;
+}
+
+/**
+ * Third-party download consent. Shown before the first install so nobody is
+ * surprised that setup reaches outside the machine.
+ */
+function ThirdPartyNotice({
+    settings,
+    disabled,
+    onAccept,
+}: {
+    settings: PluginSettings;
+    disabled: boolean;
+    onAccept: () => void;
+}) {
+    const model = downloadTargets(settings);
+
+    return (
+        <div className="sem-tp" role="note">
+            <p className="sem-tp-text">
+                Installing downloads files from third parties: the llama.cpp program from{" "}
+                <strong>github.com</strong> (ggml-org/llama.cpp releases, about 25 MB (CPU) to 620 MB (NVIDIA
+                CUDA)) and the embedding model from <strong>huggingface.co</strong> (
+                <span className="sem-mono">
+                    {model.repo}/{model.file}
+                </span>
+                {model.bytes ? `, ${formatBytes(model.bytes)}` : ", size known once the download starts"}).
+                Nothing else leaves your device, and your chat text is never sent anywhere with the local
+                source.
+            </p>
+            <div className="sem-button-row">
+                <Button variant="primary" disabled={disabled} onClick={onAccept}>
+                    Download and install
+                </Button>
+            </div>
+        </div>
+    );
 }
 
 function describeModel(settings: PluginSettings): { name: string; source: string; dims?: number } {

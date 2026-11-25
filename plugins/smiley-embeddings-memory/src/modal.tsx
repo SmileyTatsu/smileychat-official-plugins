@@ -441,11 +441,15 @@ function RetrievalView({ result }: { result: RetrievalResult }) {
             ) : null}
 
             {result.memories.length > 0 ? (
-                <ol className="sem-memories">
-                    {result.memories.map((memory) => (
-                        <MemoryRow key={memory.chunkId} memory={memory} />
-                    ))}
-                </ol>
+                <>
+                    {/* The summary lists scores best-first, these cards follow the chat. */}
+                    <span className="sem-label-sm">Shown in chat order (oldest first)</span>
+                    <ol className="sem-memories">
+                        {result.memories.map((memory) => (
+                            <MemoryRow key={memory.chunkId} memory={memory} />
+                        ))}
+                    </ol>
+                </>
             ) : null}
 
             <div className="sem-metrics">
