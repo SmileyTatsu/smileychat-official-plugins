@@ -779,6 +779,7 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                                 <ErrorBox
                                     message={failureAt("index")!.message}
                                     hint={failureAt("index")!.hint}
+                                    onDismiss={() => setFailure(null)}
                                 />
                             ) : null}
                         </div>
@@ -1157,6 +1158,7 @@ export function MemorySettingsPanel({ controller }: { controller: MemoryControll
                             <ErrorBox
                                 message={failureAt("advanced")!.message}
                                 hint={failureAt("advanced")!.hint}
+                                onDismiss={() => setFailure(null)}
                             />
                         ) : null}
                     </div>
@@ -1242,15 +1244,25 @@ function TaskRow({
     task: TaskStatus | undefined;
     onCancel: () => void;
 }) {
+    // Hooks cannot sit after the early returns below, so they come first.
+    const [dismissed, setDismissed] = useState<string | null>(null);
+
     if (!task || (task.state !== "running" && task.state !== "error")) {
         return null;
     }
 
     if (task.state === "error") {
+        const message = task.error ?? `${label} failed.`;
+
+        if (message === dismissed) {
+            return null;
+        }
+
         return (
             <ErrorBox
-                message={task.error ?? `${label} failed.`}
+                message={message}
                 hint="Check the connection, then run Install and test again."
+                onDismiss={() => setDismissed(message)}
             />
         );
     }

@@ -191,7 +191,13 @@ function DryRunTab({ controller }: { controller: MemoryController }) {
                 <small className="sem-reason">Dry run only: nothing is sent and the last injection is unchanged.</small>
             </div>
 
-            {failure ? <ErrorBox message={failure.message} hint={failure.hint} /> : null}
+            {failure ? (
+                <ErrorBox
+                    message={failure.message}
+                    hint={failure.hint}
+                    onDismiss={() => setFailure(null)}
+                />
+            ) : null}
 
             {result ? (
                 <div className="sem-result">
@@ -213,6 +219,11 @@ function StatusTab({ controller }: { controller: MemoryController }) {
     const serverPoll = usePoll(() => controller.host.status(), 4000, true);
     const [busy, setBusy] = useState(false);
     const [failure, setFailure] = useState<ErrorParts | null>(null);
+    // Both polled errors can be on screen at once, and each is still true after the
+    // other is dismissed, so dismissal is a list. A message that changes shows again.
+    const [dismissed, setDismissed] = useState<string[]>([]);
+    const hideError = (message: string) =>
+        setDismissed((previous) => (previous.includes(message) ? previous : [...previous, message]));
 
     const index = indexPoll.value;
     const progress: IndexerProgress = controller.progress();
@@ -229,6 +240,7 @@ function StatusTab({ controller }: { controller: MemoryController }) {
 
         setBusy(true);
         setFailure(null);
+        setDismissed([]);
 
         try {
             await action();
@@ -305,8 +317,19 @@ function StatusTab({ controller }: { controller: MemoryController }) {
                     ) : null}
                 </div>
 
-                {index?.lastError ? <ErrorBox message={index.lastError} /> : null}
-                {failure ? <ErrorBox message={failure.message} hint={failure.hint} /> : null}
+                {index?.lastError && !dismissed.includes(index.lastError) ? (
+                    <ErrorBox
+                        message={index.lastError}
+                        onDismiss={() => hideError(index.lastError!)}
+                    />
+                ) : null}
+                {failure ? (
+                    <ErrorBox
+                        message={failure.message}
+                        hint={failure.hint}
+                        onDismiss={() => setFailure(null)}
+                    />
+                ) : null}
             </Section>
 
             <Section title="Local server" description="Only the local source runs a program on this computer.">
@@ -351,7 +374,12 @@ function StatusTab({ controller }: { controller: MemoryController }) {
                     />
                 </div>
 
-                {process?.lastError ? <ErrorBox message={process.lastError} /> : null}
+                {process?.lastError && !dismissed.includes(process.lastError) ? (
+                    <ErrorBox
+                        message={process.lastError}
+                        onDismiss={() => hideError(process.lastError!)}
+                    />
+                ) : null}
             </Section>
         </div>
     );
