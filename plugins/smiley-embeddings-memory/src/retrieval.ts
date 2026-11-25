@@ -322,40 +322,93 @@ function scoreChunks(
 }
 
 /**
- * Consecutive chunks of the same message become one memory, so the prompt shows
- * a whole paragraph instead of two fragments of it. Chunks are ordered by their
- * position in the index, which is chat order.
+ * Turns the top-K chunks into prompt memories.
+ *
+ * Adjacency is decided per message by `ord`, never by index position:
+ * `appendMessageChunks` re-appends an edited message at the end of the index, so
+ * index order stops matching chat order after the first edit. The prompt order
+ * therefore comes from `messages` itself; a memory whose message has left the
+ * chat has no position, so it goes first and keeps its relative index order.
  */
 function mergeChunks(
     index: ChatIndex,
     selected: { chunk: number; score: number }[],
     messages: { id: string; text: string }[],
 ): Memory[] {
-    const ordered = [...selected].sort((a, b) => a.chunk - b.chunk);
     const ages = messageAges(messages);
-    const memories: Memory[] = [];
+    const positions = messagePositions(messages);
+    const byMessage = new Map<string, { chunk: number; score: number }[]>();
 
-    for (const entry of ordered) {
-        const chunk = index.chunks[entry.chunk];
-        const last = memories[memories.length - 1];
+    // Chunks of one message may arrive in any index order; grouping first lets
+    // the merge work on `ord`, which is the real adjacency.
+    for (const entry of selected) {
+        const messageId = index.chunks[entry.chunk].messageId;
+        const group = byMessage.get(messageId);
 
-        if (last && last.messageId === chunk.messageId && chunk.ord === last.ord + 1) {
-            last.text = `${last.text} ${chunk.text}`;
-            last.score = Math.max(last.score, entry.score);
-            continue;
+        if (group) {
+            group.push(entry);
+        } else {
+            byMessage.set(messageId, [entry]);
         }
-
-        memories.push({
-            chunkId: chunk.id,
-            messageId: chunk.messageId,
-            ord: chunk.ord,
-            score: entry.score,
-            text: chunk.text,
-            messagesAgo: ages.get(chunk.messageId) ?? -1,
-        });
     }
 
-    return memories;
+    const merged: { memory: Memory; firstChunk: number }[] = [];
+
+    for (const [messageId, entries] of byMessage) {
+        const sorted = [...entries].sort((a, b) => index.chunks[a.chunk].ord - index.chunks[b.chunk].ord);
+        let memory: Memory | null = null;
+        let firstChunk = 0;
+        let lastOrd = -1;
+
+        const flush = () => {
+            if (memory) {
+                merged.push({ memory, firstChunk });
+            }
+        };
+
+        for (const entry of sorted) {
+            const chunk = index.chunks[entry.chunk];
+
+            if (memory && chunk.ord === lastOrd + 1) {
+                memory.text = `${memory.text} ${chunk.text}`;
+                memory.score = Math.max(memory.score, entry.score);
+                lastOrd = chunk.ord;
+                continue;
+            }
+
+            flush();
+
+            memory = {
+                chunkId: chunk.id,
+                messageId,
+                ord: chunk.ord,
+                score: entry.score,
+                text: chunk.text,
+                messagesAgo: ages.get(messageId) ?? -1,
+            };
+            firstChunk = entry.chunk;
+            lastOrd = chunk.ord;
+        }
+
+        flush();
+    }
+
+    merged.sort((a, b) => {
+        const leftKnown = a.memory.messagesAgo !== -1;
+        const rightKnown = b.memory.messagesAgo !== -1;
+
+        if (leftKnown !== rightKnown) {
+            return leftKnown ? 1 : -1;
+        }
+
+        if (!leftKnown) {
+            return a.firstChunk - b.firstChunk;
+        }
+
+        return (positions.get(a.memory.messageId) ?? 0) - (positions.get(b.memory.messageId) ?? 0);
+    });
+
+    return merged.map((entry) => entry.memory);
 }
 
 /** Position counted from the newest message; absent messages stay -1. */
@@ -367,6 +420,17 @@ function messageAges(messages: { id: string; text: string }[]): Map<string, numb
     }
 
     return ages;
+}
+
+/** Chat position, oldest first; the prompt order source. */
+function messagePositions(messages: { id: string; text: string }[]): Map<string, number> {
+    const positions = new Map<string, number>();
+
+    for (let i = 0; i < messages.length; i += 1) {
+        positions.set(messages[i].id, i);
+    }
+
+    return positions;
 }
 
 function renderTemplate(template: string, memories: Memory[]): string {

@@ -152,6 +152,13 @@ describe("normalizeSettings", () => {
         expect(settings.apiNoticeAccepted).toBe(DEFAULT_SETTINGS.apiNoticeAccepted);
     });
 
+    test("tracks whether setup was completed, defaulting to false", () => {
+        expect(DEFAULT_SETTINGS.setupComplete).toBe(false);
+        expect(normalizeSettings({}).setupComplete).toBe(false);
+        expect(normalizeSettings({ setupComplete: true }).setupComplete).toBe(true);
+        expect(normalizeSettings({ setupComplete: "1" }).setupComplete).toBe(false);
+    });
+
     test("round-trips the defaults", () => {
         expect(normalizeSettings(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS);
     });
@@ -194,6 +201,15 @@ describe("serverConfigOf", () => {
 
         expect(config.binaryPath).toBe("C:/bin/llama-server.exe");
         expect(config.modelPath).toBe("C:/models/a.gguf");
+    });
+
+    test("never sends the browser-only settings to the server", () => {
+        const config = serverConfigOf(normalizeSettings({ setupComplete: true }));
+
+        // The module has no use for them and its validator rejects unknown keys.
+        expect(config).not.toHaveProperty("setupComplete");
+        expect(config).not.toHaveProperty("enabled");
+        expect(config).not.toHaveProperty("api");
     });
 });
 

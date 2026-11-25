@@ -218,6 +218,49 @@ describe("retrieveMemories", () => {
         expect(result.injectedText).toBe("M\n- first part second part\n- far away");
     });
 
+    test("orders memories by chat position, not by where the index appended them", async () => {
+        // m1 was edited after m2 was indexed, so reconcile re-appended it at the
+        // end of the index; the prompt must still read oldest message first.
+        const index = makeIndex([
+            { messageId: "m2", ord: 0, text: "second", vector: [1, 0, 0] },
+            { messageId: "m1", ord: 0, text: "first", vector: [0.95, 0.1, 0] },
+        ]);
+        const { embedder } = fakeEmbedder([unit(1, 0, 0)]);
+
+        const result = await retrieveMemories({
+            index,
+            messages: messagesOf("first", "second", "third"),
+            settings: settingsWith(),
+            embedder,
+            estimateTokens: charTokens,
+        });
+
+        // Scored by relevance, injected in chat order.
+        expect(result.memories.map((memory) => memory.messageId)).toEqual(["m1", "m2"]);
+        expect(result.injectedText).toBe("M\n- first\n- second");
+    });
+
+    test("merges consecutive ords that arrive shuffled in the index", async () => {
+        const index = makeIndex([
+            { messageId: "m1", ord: 1, text: "second part", vector: [0.9, 0.1, 0] },
+            { messageId: "m1", ord: 0, text: "first part", vector: [1, 0, 0] },
+            { messageId: "m1", ord: 3, text: "far tail", vector: [0.85, 0.1, 0] },
+        ]);
+        const { embedder } = fakeEmbedder([unit(1, 0, 0)]);
+
+        const result = await retrieveMemories({
+            index,
+            messages: messagesOf("one", "two"),
+            settings: settingsWith(),
+            embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(result.memories.map((memory) => memory.ord)).toEqual([0, 3]);
+        expect(result.memories[0].text).toBe("first part second part");
+        expect(result.injectedText).toBe("M\n- first part second part\n- far tail");
+    });
+
     test("keeps newlines in a memory but indents its continuation lines", async () => {
         const index = makeIndex([
             { messageId: "m1", ord: 0, text: "line one\nline two", vector: [1, 0, 0] },
@@ -245,7 +288,7 @@ describe("retrieveMemories", () => {
 
         const result = await retrieveMemories({
             index,
-            messages: messagesOf("one", "two"),
+            messages: messagesOf("one", "two", "three"),
             // Three memories render to 68 chars, two to 47.
             settings: settingsWith({ maxMemoryTokens: 50 }),
             embedder,

@@ -55,6 +55,8 @@ export type PluginSettings = {
     autoIndexBacklog: boolean;
     /** Set once the user has seen "your messages will be sent to {host}". */
     apiNoticeAccepted: boolean;
+    /** First successful test; keeps the wizard collapsed after a reload. */
+    setupComplete: boolean;
 };
 
 export const SETTINGS_KEY = "settings";
@@ -106,6 +108,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     timeoutMs: 8000,
     autoIndexBacklog: true,
     apiNoticeAccepted: false,
+    setupComplete: false,
 };
 
 /**
@@ -165,6 +168,7 @@ export function normalizeSettings(raw: unknown): PluginSettings {
         timeoutMs: integerValue(source.timeoutMs, 1000, 60000, DEFAULT_SETTINGS.timeoutMs),
         autoIndexBacklog: booleanValue(source.autoIndexBacklog, DEFAULT_SETTINGS.autoIndexBacklog),
         apiNoticeAccepted: booleanValue(source.apiNoticeAccepted, DEFAULT_SETTINGS.apiNoticeAccepted),
+        setupComplete: booleanValue(source.setupComplete, DEFAULT_SETTINGS.setupComplete),
     };
 }
 
