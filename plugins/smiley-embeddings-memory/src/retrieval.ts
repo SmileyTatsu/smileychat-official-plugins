@@ -175,6 +175,13 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
     );
     // The embedder knows which prefix profile (and therefore which model family)
     // is answering, which is what decides the sensible cut-off.
+    //
+    // The cut-off is absolute on purpose: a relative band ("keep only what is
+    // within X of the best match") cannot reject an unrelated turn, because the
+    // best chunk always survives it. Measured on three chats, the false matches
+    // come from the two-message window itself (an unrelated question inherits
+    // its neighbour's score), which the cut-off cannot repair either; see the
+    // calibration note on DEFAULT_THRESHOLDS.
     const threshold = effectiveThreshold(settings, embedder.model.prefixProfile);
 
     working.skippedRecent = skipped;

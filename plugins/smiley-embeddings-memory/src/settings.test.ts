@@ -249,9 +249,17 @@ describe("effectiveThreshold", () => {
     test("uses the calibrated default of the model's prefix profile when auto", () => {
         const auto = normalizeSettings({});
 
-        expect(effectiveThreshold(auto, "gemma")).toBe(0.73);
+        expect(effectiveThreshold(auto, "gemma")).toBe(0.76);
         expect(effectiveThreshold(auto, "qwen3")).toBe(0.59);
         expect(effectiveThreshold(auto, "none")).toBe(0.3);
+    });
+
+    test("keeps the cut-offs above the strongest unrelated probe measured", () => {
+        // Three-chat calibration (see DEFAULT_THRESHOLDS): the worst unrelated
+        // probe scored 0.735 with Gemma and 0.551 with Qwen3, so a cut-off at or
+        // below those numbers starts injecting chat noise in long sessions.
+        expect(effectiveThreshold(DEFAULT_SETTINGS, "gemma")).toBeGreaterThan(0.735);
+        expect(effectiveThreshold(DEFAULT_SETTINGS, "qwen3")).toBeGreaterThan(0.551);
     });
 
     test("an explicit number overrides every profile", () => {

@@ -191,7 +191,7 @@ describe("retrieveMemories", () => {
     });
 
     test("uses the model profile's calibrated threshold when the setting is auto", async () => {
-        // 0.65 sits between Qwen3's 0.59 cut-off and Gemma's 0.73: unrelated text
+        // 0.65 sits between Qwen3's 0.59 cut-off and Gemma's 0.76: unrelated text
         // scores that high for Gemma, so only one of the two may inject it.
         const index = makeIndex([{ messageId: "m1", ord: 0, text: "alpha", vector: [0.65, 0.759934, 0] }]);
         const query = unit(1, 0, 0);
@@ -215,7 +215,7 @@ describe("retrieveMemories", () => {
         });
 
         expect(gemma.reason).toBe("below-threshold");
-        expect(gemma.detail).toContain("below 0.73");
+        expect(gemma.detail).toContain("below 0.76");
     });
 
     test("an explicit threshold overrides the model's default", async () => {

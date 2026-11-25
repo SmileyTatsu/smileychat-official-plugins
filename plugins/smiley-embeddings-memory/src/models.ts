@@ -64,20 +64,31 @@ export const DEFAULT_QWEN3_TASK =
     "Given a chat message, retrieve relevant past events from the same conversation";
 
 /**
- * Cosine cut-offs per prefix profile, measured on the E2E chat (46 messages,
- * 46 chunks, chunkText 400/40) with the two catalog models:
+ * Cosine cut-offs per prefix profile, measured on three chats (SEM-E2E-TEST 44,
+ * SEM-E2E-TEST-2 45 and SEM-E2E-BIG 600 messages -> 873 chunks, chunkText
+ * 400/40) with 43 relevant and 54 unrelated probes, each user message scored
+ * on its own against the older history:
  *
- *   profile  model                  RELEVANT best    UNRELATED best
- *   gemma    EmbeddingGemma-2 Q4    0.768 - 0.890    0.613 - 0.687  -> 0.73
- *   qwen3    Qwen3-Embedding-4B     0.698 - 0.801    0.258 - 0.479  -> 0.59
+ *   profile  model                  RELEVANT best     UNRELATED best  -> cut-off
+ *   gemma    EmbeddingGemma-2 Q4    0.737 - 0.903     0.564 - 0.735      0.76
+ *   qwen3    Qwen3-Embedding-4B     0.517 - 0.864     0.247 - 0.551      0.59
  *
- * Each value is the midpoint of that gap (gemma 0.6875/0.768 = 0.7275 rounded
- * up; qwen3 0.479/0.698 = 0.5885 rounded up). Gemma's cosines sit far higher
- * even for unrelated text, which is why one shared 0.3 let nonsense through.
+ * Each value is the highest cut-off that still retrieves something for over
+ * 90% of the relevant probes while none of the unrelated probes pass (both
+ * keep 40/43 = 93%). Gemma scores unrelated text far higher than Qwen3, so one
+ * shared 0.3 let nonsense through and 0.73 still passed "ok" (0.735) in a long
+ * chat.
+ *
+ * Neither model separates the two-message window the plugin actually sends
+ * (last message + previous reply, best score wins): an unrelated question
+ * inherits its neighbour's score, 0.81 - 0.94 for gemma against repetitive
+ * prose, which is the same range as relevant text. No cut-off fixes that, so
+ * these values are calibrated on a single message and stay precision-first.
+ *
  * `none` keeps the generic 0.3 of OpenAI-compatible endpoints: not calibrated.
  */
 export const DEFAULT_THRESHOLDS: Record<PrefixProfile, number> = {
-    gemma: 0.73,
+    gemma: 0.76,
     qwen3: 0.59,
     none: 0.3,
 };
