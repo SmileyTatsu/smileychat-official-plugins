@@ -284,6 +284,16 @@ function cudaInstallFixtures(tag: string): { assets: AssetFixture[]; bodies: Map
     return { assets, bodies: bodiesOf(tag, assets) };
 }
 
+/** One release that offers both a CPU and a Vulkan build, for the device-choice tests. */
+function cpuVulkanFixtures(tag: string): { assets: AssetFixture[]; bodies: Map<string, Uint8Array> } {
+    const assets: AssetFixture[] = [
+        { name: `llama-${tag}-bin-win-cpu-x64.zip`, bytes: zip({ "llama-server.exe": "cpu-build" }) },
+        { name: `llama-${tag}-bin-win-vulkan-x64.zip`, bytes: zip({ "llama-server.exe": "vulkan-build" }) },
+    ];
+
+    return { assets, bodies: bodiesOf(tag, assets) };
+}
+
 describe("status", () => {
     test("reports nothing installed on an empty data dir", async () => {
         const { installer } = harness();
@@ -292,6 +302,7 @@ describe("status", () => {
         expect(status.binary).toEqual({
             installed: false,
             bytesOnDisk: 0,
+            installedBackends: [],
             task: { state: "idle", received: 0, total: 0 },
         });
         expect(status.model).toEqual({
@@ -327,6 +338,130 @@ describe("status", () => {
         const status = await installer.status(config());
 
         expect(status.binary.installed).toBe(false);
+    });
+});
+
+describe("device-aware status", () => {
+    test("a cpu build counts for device cpu and auto, not for gpu", async () => {
+        const binaryPath = await installFakeBuild("b12686", "cpu");
+        const { installer } = harness({ nvidiaSmi: CUDA_13 });
+
+        expect((await installer.status(config({ device: "cpu" }))).binary).toMatchObject({
+            installed: true,
+            backend: "cpu",
+            tag: "b12686",
+            path: binaryPath,
+            installedBackends: ["cpu"],
+        });
+
+        expect((await installer.status(config({ device: "auto" }))).binary.installed).toBe(true);
+        // gpu means gpu: a CPU build is not an answer to "run on the GPU".
+        expect((await installer.status(config({ device: "gpu" }))).binary).toMatchObject({
+            installed: false,
+            installedBackends: ["cpu"],
+        });
+    });
+
+    test("a vulkan build is not installed for device cpu (the panel-skip bug)", async () => {
+        await installFakeBuild("b12686", "vulkan");
+        const { installer } = harness({ nvidiaSmi: CUDA_13 });
+
+        const cpu = (await installer.status(config({ device: "cpu" }))).binary;
+
+        expect(cpu.installed).toBe(false);
+        // No path/tag/backend either: nothing may make the panel look ready for cpu.
+        expect(cpu.path).toBeUndefined();
+        expect(cpu.backend).toBeUndefined();
+        expect(cpu.tag).toBeUndefined();
+        // But the UI can still say what is there.
+        expect(cpu.installedBackends).toEqual(["vulkan"]);
+
+        expect((await installer.status(config({ device: "gpu" }))).binary).toMatchObject({ installed: true, backend: "vulkan" });
+        expect((await installer.status(config({ device: "auto" }))).binary).toMatchObject({ installed: true, backend: "vulkan" });
+    });
+
+    test("with both builds it picks per device and lists them", async () => {
+        const cpuPath = await installFakeBuild("b12686", "cpu");
+        const vulkanPath = await installFakeBuild("b12686", "vulkan");
+        const { installer } = harness({ nvidiaSmi: CUDA_13 });
+
+        expect((await installer.status(config({ device: "cpu" }))).binary).toMatchObject({ path: cpuPath, backend: "cpu" });
+        expect((await installer.status(config({ device: "gpu" }))).binary).toMatchObject({
+            path: vulkanPath,
+            backend: "vulkan",
+        });
+        // GPU first under auto.
+        expect((await installer.status(config({ device: "auto" }))).binary).toMatchObject({
+            path: vulkanPath,
+            backend: "vulkan",
+            installedBackends: ["vulkan", "cpu"],
+        });
+    });
+
+    test("cuda plus cpu", async () => {
+        const cudaPath = await installFakeBuild("b12686", "cuda");
+        const cpuPath = await installFakeBuild("b12686", "cpu");
+        const { installer } = harness({ nvidiaSmi: CUDA_13 });
+
+        expect((await installer.status(config({ device: "auto" }))).binary).toMatchObject({
+            path: cudaPath,
+            backend: "cuda",
+            installedBackends: ["cuda", "cpu"],
+        });
+        expect((await installer.status(config({ device: "gpu" }))).binary.path).toBe(cudaPath);
+        expect((await installer.status(config({ device: "cpu" }))).binary.path).toBe(cpuPath);
+    });
+
+    test("gpuBackend narrows which GPU build counts", async () => {
+        await installFakeBuild("b12686", "vulkan");
+        const { installer } = harness({ nvidiaSmi: CUDA_13 });
+
+        // Status does not probe, so a cuda build would count under "cuda"; a vulkan one never does.
+        expect((await installer.status(config({ device: "gpu", gpuBackend: "cuda" }))).binary.installed).toBe(false);
+        expect((await installer.status(config({ device: "gpu", gpuBackend: "vulkan" }))).binary.installed).toBe(true);
+
+        await rm(join(workDir, "bin"), { recursive: true, force: true });
+        await installFakeBuild("b12686", "cuda");
+
+        expect((await installer.status(config({ device: "gpu", gpuBackend: "vulkan" }))).binary.installed).toBe(false);
+        expect((await installer.status(config({ device: "gpu", gpuBackend: "cuda" }))).binary.installed).toBe(true);
+        expect((await installer.status(config({ device: "gpu" }))).binary.installed).toBe(true);
+    });
+
+    test("a manual path decides installed, but the disk is still listed", async () => {
+        await installFakeBuild("b12686", "vulkan");
+        const manual = await writeFileOfSize(join(workDir, "manual", "llama-server.exe"), 8);
+        const { installer } = harness({ nvidiaSmi: CUDA_13 });
+
+        expect((await installer.status(config({ device: "cpu", binaryPath: manual }))).binary).toMatchObject({
+            installed: true,
+            backend: "manual",
+            path: manual,
+            installedBackends: ["vulkan"],
+        });
+        expect(
+            (await installer.status(config({ device: "cpu", binaryPath: join(workDir, "gone", "llama-server.exe") })))
+                .binary.installed,
+        ).toBe(false);
+    });
+});
+
+describe("resolveLaunch refusal text", () => {
+    test("names the device and the next step", async () => {
+        await installFakeBuild("b12686", "vulkan");
+        const modelPath = await writeFileOfSize(join(workDir, "manual.gguf"), 64);
+        const { installer } = harness({ nvidiaSmi: CUDA_13 });
+
+        const resolved = await installer.resolveLaunch(config({ device: "cpu", modelPath }));
+
+        expect(resolved.ok).toBe(false);
+
+        if (resolved.ok) {
+            return;
+        }
+
+        // The server's own message: main.ts must pass it on, not replace it with "model missing".
+        expect(resolved.error).toBe("No llama.cpp build installed for cpu. Open the setup and press Install.");
     });
 });
 
@@ -399,6 +534,63 @@ describe("binary install", () => {
             path: join(buildDir, "build", "bin", "llama-server.exe"),
         });
         expect(status.binary.task.state).toBe("done");
+    });
+
+    test("device cpu installs the cpu build even when a gpu build is on disk", async () => {
+        const fixtures = cpuVulkanFixtures("b12686");
+
+        await installFakeBuild("b12686", "vulkan");
+
+        const vulkanMarkerPath = join(workDir, "bin", "b12686", "vulkan", MARKER);
+        const vulkanMarker = await readFile(vulkanMarkerPath, "utf8");
+        const harnessed = harness({
+            bodies: fixtures.bodies,
+            fetchJson: async () => releasePayload("b12686", fixtures.assets),
+            nvidiaSmi: CUDA_13,
+        });
+        const serverConfig = config({ device: "cpu", releaseTag: "b12686" });
+
+        harnessed.installer.startBinaryInstall(serverConfig);
+
+        const done = await waitForTask(harnessed.installer, serverConfig, "binary");
+
+        expect(done.state).toBe("done");
+        // The cpu asset, and only it: the Vulkan folder already satisfies nothing for device cpu.
+        expect(harnessed.calls.map((call) => call.url)).toEqual([assetUrl("b12686", fixtures.assets[0].name)]);
+        expect(await fileExists(join(workDir, "bin", "b12686", "cpu", MARKER))).toBe(true);
+        expect(await readFile(vulkanMarkerPath, "utf8")).toBe(vulkanMarker);
+
+        // Now cpu is complete, so a second press is the no-op.
+        harnessed.calls.length = 0;
+        harnessed.installer.startBinaryInstall(serverConfig);
+
+        const again = await waitForTask(harnessed.installer, serverConfig, "binary");
+
+        expect(again.state).toBe("done");
+        expect(again.message).toContain("already installed");
+        expect(harnessed.calls).toEqual([]);
+    });
+
+    test("device gpu installs a gpu build even when only the cpu build is on disk", async () => {
+        const fixtures = cpuVulkanFixtures("b12686");
+
+        await installFakeBuild("b12686", "cpu");
+
+        const harnessed = harness({
+            bodies: fixtures.bodies,
+            fetchJson: async () => releasePayload("b12686", fixtures.assets),
+            nvidiaSmi: CUDA_13,
+        });
+        const serverConfig = config({ device: "gpu", releaseTag: "b12686" });
+
+        harnessed.installer.startBinaryInstall(serverConfig);
+
+        const done = await waitForTask(harnessed.installer, serverConfig, "binary");
+
+        expect(done.state).toBe("done");
+        // This release has no CUDA asset, so Vulkan is the GPU plan; the cpu build is not a no-op.
+        expect(harnessed.calls.map((call) => call.url)).toEqual([assetUrl("b12686", fixtures.assets[1].name)]);
+        expect(await fileExists(join(workDir, "bin", "b12686", "vulkan", MARKER))).toBe(true);
     });
 
     test("a second install of a complete folder downloads nothing", async () => {
@@ -728,6 +920,29 @@ describe("resolveLaunch", () => {
         expect(cpu.candidates).toHaveLength(1);
         expect(cpu.candidates[0]).toMatchObject({ backend: "metal", gpuLayers: 0 });
         expect(auto.candidates[0].gpuLayers).toBe(99);
+    });
+
+    test("an NVIDIA GPU with no reported CUDA version still prefers cuda", async () => {
+        // Newer drivers print `CUDA UMD Version`; releases.ts reports nvidia without a major and
+        // planBinaries then offers the newest CUDA build, so the ordering has to agree.
+        const bannerWithoutVersion = "| NVIDIA-SMI 590.00      Driver Version: 590.00      |";
+
+        await installFakeBuild("b12686", "vulkan");
+        const cudaPath = await installFakeBuild("b12686", "cuda");
+        const modelPath = await writeFileOfSize(join(workDir, "manual.gguf"), 64);
+        const { installer } = harness({ nvidiaSmi: bannerWithoutVersion });
+
+        const gpu = await installer.resolveLaunch(config({ modelPath, device: "gpu" }));
+
+        expect(gpu.ok).toBe(true);
+
+        if (!gpu.ok) {
+            return;
+        }
+
+        expect(gpu.candidates.map((candidate) => candidate.backend)).toEqual(["cuda", "vulkan"]);
+        expect(gpu.candidates[0].binary).toBe(cudaPath);
+        expect((await installer.status(config())).binary.backend).toBe("cuda");
     });
 
     test("device gpu never falls back to the cpu build", async () => {

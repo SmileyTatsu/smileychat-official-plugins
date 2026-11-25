@@ -114,6 +114,8 @@ export type InstallerStatus = {
         tag?: string;
         backend?: Backend | "manual";
         path?: string;
+        /** Backends unpacked on disk for the active tag, whatever the device choice, so the UI can say "Vulkan installed; CPU build missing". */
+        installedBackends?: Backend[];
         bytesOnDisk: number;
         task: TaskStatus;
     };

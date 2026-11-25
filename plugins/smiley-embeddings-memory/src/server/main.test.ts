@@ -89,8 +89,8 @@ function makeHost(behaviors: Behaviors = {}): FakeHost {
 }
 
 /** A build that looks installed: the marker plus the binary it names, one level down as in a zip. */
-async function seedBuild(dataDir: string): Promise<string> {
-    const dir = join(dataDir, "bin", TAG, BACKEND);
+async function seedBuild(dataDir: string, backend = BACKEND): Promise<string> {
+    const dir = join(dataDir, "bin", TAG, backend);
     const binary = "build/bin/llama-server.exe";
     const binaryPath = join(dir, binary);
 
@@ -98,7 +98,7 @@ async function seedBuild(dataDir: string): Promise<string> {
     await writeFile(binaryPath, "binary");
     await writeFile(
         join(dir, MARKER),
-        JSON.stringify({ tag: TAG, backend: BACKEND, assets: ["fake.zip"], installedAt: new Date().toISOString(), binary }),
+        JSON.stringify({ tag: TAG, backend, assets: ["fake.zip"], installedAt: new Date().toISOString(), binary }),
     );
 
     return binaryPath;
@@ -446,9 +446,38 @@ describe("POST /embed", () => {
 
         for (const subpath of ["/embed", "/start"]) {
             const response = await request(app, "POST", subpath, subpath === "/embed" ? { texts: ["a"] } : undefined);
+            const body = await read<{ error: { code: string; message: string } }>(response);
 
             expect(response.status).toBe(409);
-            expect((await read<{ error: { code: string; message: string } }>(response)).error.code).toBe("not-installed");
+            expect(body.error.code).toBe("not-installed");
+            // The installer's own text reaches the browser unchanged: it names the device and the fix.
+            expect(body.error.message).toBe("No llama.cpp build installed for cpu. Open the setup and press Install.");
+        }
+
+        expect(app.host.spawns).toHaveLength(0);
+    });
+
+    test("a build for another device is reported missing, not installed", async () => {
+        const app = await makeApp({ install: "none" });
+
+        // The panel bug: device cpu, only the Vulkan build on disk. Status must not claim ready,
+        // and /embed must not be reached (it would otherwise fail on the model and mislead).
+        await seedBuild(app.host.dataDir, "vulkan");
+
+        const status = await read<{ installer: { binary: Record<string, unknown> } }>(
+            await request(app, "GET", "/status"),
+        );
+
+        expect(status.installer.binary).toMatchObject({ installed: false, installedBackends: ["vulkan"] });
+        expect(status.installer.binary.path).toBeUndefined();
+
+        for (const subpath of ["/embed", "/start"]) {
+            const response = await request(app, "POST", subpath, subpath === "/embed" ? { texts: ["a"] } : undefined);
+            const body = await read<{ error: { code: string; message: string } }>(response);
+
+            expect(response.status).toBe(409);
+            expect(body.error.code).toBe("not-installed");
+            expect(body.error.message).toBe("No llama.cpp build installed for cpu. Open the setup and press Install.");
         }
 
         expect(app.host.spawns).toHaveLength(0);

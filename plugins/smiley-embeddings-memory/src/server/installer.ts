@@ -267,8 +267,12 @@ function gpuLayersFor(config: ServerConfig, backend: Backend | "manual"): number
  * Backend preference for this machine, in the order planBinaries would try them. Duplicated
  * here in the small form resolveLaunch needs: planBinaries orders *release assets*, and this
  * orders *installed folders*, which have no assets to match against.
+ *
+ * `gpu === null` means "not probed" (status() must not spawn nvidia-smi). A CUDA build is then
+ * counted as usable, because only a real start can prove the driver cannot run it, and a wrong
+ * "not installed" would send the user back to the installer for 600 MB they do not need.
  */
-function backendOrder(platform: Platform, gpu: GpuInfo, config: ServerConfig): Backend[] {
+function backendOrder(platform: Platform, gpu: GpuInfo | null, config: ServerConfig): Backend[] {
     const wantsGpu = config.device !== "cpu";
     const wantsCpu = config.device !== "gpu";
 
@@ -285,9 +289,15 @@ function backendOrder(platform: Platform, gpu: GpuInfo, config: ServerConfig): B
     const order: Backend[] = [];
     // Windows ships GPU builds for both arches; Linux only for x64 (arm64 is CPU-only).
     const gpuAssets = platform.os === "win32" || (platform.os === "linux" && platform.arch === "x64");
+    // Same rule cudaMajorsFor applies in releases.ts: an NVIDIA machine whose driver does not
+    // report a CUDA version ("CUDA UMD Version" on newer drivers) still gets the CUDA build
+    // first, because planBinaries offers it and a start would otherwise use a build this
+    // ordering never proposes.
+    const cudaUsable =
+        gpu === null || (gpu.nvidia && (gpu.cudaMajor === undefined || gpu.cudaMajor >= 12));
 
     if (wantsGpu && gpuAssets) {
-        if (config.gpuBackend !== "vulkan" && gpu.nvidia && (gpu.cudaMajor ?? 0) >= 12) {
+        if (config.gpuBackend !== "vulkan" && cudaUsable) {
             order.push("cuda");
         }
 
@@ -323,41 +333,43 @@ function newestTag(builds: InstalledBuild[]): string | undefined {
     return best?.tag;
 }
 
+/** Installed builds of the tag the config asks for; `latest` means the newest installed tag. */
+function buildsForTag(builds: InstalledBuild[], config: ServerConfig): InstalledBuild[] {
+    const tag = config.releaseTag === "latest" ? newestTag(builds) : config.releaseTag;
+
+    return builds.filter((build) => build.tag === tag);
+}
+
 /**
- * Installed builds for the configured tag, most preferred first.
- *
- * `lenient` is for status(): it has to stay cheap (no nvidia-smi, no network), so without GPU
- * information a build for another backend still counts as installed there. resolveLaunch never
- * uses it — it must not offer a build the user's device choice excluded.
+ * Installed builds for the configured tag, most preferred first, filtered by the device choice.
+ * This is the single selection rule: resolveLaunch uses it with real GPU info, status() with
+ * `null`, and both therefore agree on what "installed for this device" means.
  */
 function preferBuilds(
     builds: InstalledBuild[],
     config: ServerConfig,
     platform: Platform,
-    gpu: GpuInfo,
-    lenient: boolean,
+    gpu: GpuInfo | null,
 ): InstalledBuild[] {
     if (builds.length === 0) {
         return [];
     }
 
-    const tag = config.releaseTag === "latest" ? newestTag(builds) : config.releaseTag;
-    const sameTag = builds.filter((build) => build.tag === tag);
+    const sameTag = buildsForTag(builds, config);
     const ordered: InstalledBuild[] = [];
 
     for (const backend of backendOrder(platform, gpu, config)) {
         ordered.push(...sameTag.filter((build) => build.backend === backend));
     }
 
-    if (lenient) {
-        for (const build of sameTag) {
-            if (!ordered.includes(build)) {
-                ordered.push(build);
-            }
-        }
-    }
-
     return ordered;
+}
+
+/** Every backend unpacked on disk for the tag, in a fixed order so the UI can diff it. */
+function installedBackendsFor(builds: InstalledBuild[], config: ServerConfig): Backend[] {
+    const present = new Set(buildsForTag(builds, config).map((build) => build.backend));
+
+    return BACKEND_VALUES.filter((backend) => present.has(backend));
 }
 
 function detectPlatform(): Platform {
@@ -492,6 +504,7 @@ export class Installer {
             installed: false,
             // The archives in downloads/ belong to the binary install; .part files are included.
             bytesOnDisk: binBytes + downloadBytes,
+            installedBackends: installedBackendsFor(builds, config),
             task: copyTask(this.binary.status),
         };
 
@@ -500,7 +513,11 @@ export class Installer {
             binary.backend = "manual";
             binary.installed = await isFile(config.binaryPath);
         } else {
-            const build = preferBuilds(builds, config, this.deps.platform, { nvidia: false }, true)[0];
+            // The same selection resolveLaunch makes, with `null` GPU info: status must not spawn
+            // nvidia-smi. What it must never do is call a build the device choice excludes
+            // "installed" — device cpu with only the Vulkan build on disk is missing, not ready,
+            // and saying otherwise makes the panel skip the download and Test fail later.
+            const build = preferBuilds(builds, config, this.deps.platform, null)[0];
 
             if (build) {
                 binary.installed = true;
@@ -749,7 +766,7 @@ export class Installer {
         }
 
         const gpu = await this.detectGpu();
-        const builds = preferBuilds(await this.listBuilds(), config, this.deps.platform, gpu, false);
+        const builds = preferBuilds(await this.listBuilds(), config, this.deps.platform, gpu);
 
         if (builds.length === 0) {
             return { ok: false, error: NO_BINARY_MESSAGE(config.device) };
