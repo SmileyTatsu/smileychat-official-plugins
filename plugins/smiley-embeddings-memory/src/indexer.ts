@@ -26,6 +26,7 @@ import {
     modelMatches,
     purgeIndex,
     removeMessages,
+    sweepOrphans,
 } from "./index-store";
 import { planReconcile } from "./reconcile";
 import type { ChatMessageLike, ReconcilePlan } from "./reconcile";
@@ -763,6 +764,100 @@ export function createIndexer(deps: IndexerDeps): Indexer {
             }
 
             listeners.clear();
+        },
+    };
+}
+
+/** How often a chat switch may trigger an orphan sweep. */
+const SWEEP_THROTTLE_MS = 60_000;
+
+export type OrphanSweeperDeps = {
+    storage: StorageLike;
+    listChatIds(): Promise<string[]>;
+    trace: Trace;
+    now?(): number;
+    minIntervalMs?: number;
+};
+
+export type OrphanSweeper = {
+    /** Sweeps unless a real sweep already ran inside the throttle window. */
+    maybeSweep(): Promise<void>;
+    /** Always sweeps, throttle or not. Used once at activation. */
+    sweep(): Promise<void>;
+};
+
+/**
+ * Removes index files of chats that no longer exist.
+ *
+ * The app has no "chat deleted" event, so this runs at activation and whenever
+ * the active chat changes, throttled so flipping through the sidebar does not
+ * list every chat on each click. It lives next to the indexer because it is
+ * index-storage maintenance and shares the trace.
+ *
+ * A listing that comes back empty is treated as a failed listing: a user with
+ * chats always has at least one, and wiping every index because the action
+ * failed would silently lose all embeddings.
+ */
+export function createOrphanSweeper(deps: OrphanSweeperDeps): OrphanSweeper {
+    const now = deps.now ?? (() => Date.now());
+    const minIntervalMs = deps.minIntervalMs ?? SWEEP_THROTTLE_MS;
+    let lastSweptAt = Number.NEGATIVE_INFINITY;
+    let inflight: Promise<void> | null = null;
+
+    async function sweep(): Promise<void> {
+        if (inflight) {
+            return inflight;
+        }
+
+        const run = (async () => {
+            try {
+                const chatIds = await deps.listChatIds();
+
+                if (chatIds.length === 0) {
+                    deps.trace.log("debug", "index", "index: orphan sweep skipped (no chats listed)");
+
+                    return;
+                }
+
+                const removed = await sweepOrphans(deps.storage, new Set(chatIds));
+
+                // Only a completed sweep closes the window; a failed listing
+                // must stay free to retry on the next chat switch.
+                lastSweptAt = now();
+
+                if (removed.length > 0) {
+                    deps.trace.log("info", "index", `index: removed ${removed.length} orphaned indexes`, {
+                        ids: removed,
+                    });
+                }
+            } catch (error) {
+                deps.trace.log("debug", "index", `index: orphan sweep skipped (${describeError(error)})`);
+            }
+        })();
+
+        inflight = run;
+
+        try {
+            await run;
+        } finally {
+            if (inflight === run) {
+                inflight = null;
+            }
+        }
+    }
+
+    return {
+        sweep,
+        maybeSweep(): Promise<void> {
+            if (inflight) {
+                return inflight;
+            }
+
+            if (now() - lastSweptAt < minIntervalMs) {
+                return Promise.resolve();
+            }
+
+            return sweep();
         },
     };
 }

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { hashText } from "./chunking";
 import type { Embedder } from "./embedder";
 import { EmbeddingError } from "./embedder";
-import { createIndexer } from "./indexer";
+import { createIndexer, createOrphanSweeper } from "./indexer";
 import type { Indexer, IndexerChat } from "./indexer";
 import { indexKey, loadIndex } from "./index-store";
 import type { StorageLike } from "./index-store";
@@ -534,5 +534,126 @@ describe("createIndexer", () => {
             total: 0,
             chunks: 0,
         });
+    });
+
+    test("the debounced run reads the chat when it fires, not when it was scheduled", async () => {
+        const h = harness();
+        h.setChat(chat([msg("m1", "first answer")]));
+
+        // The app calls the update middleware *before* it applies the new swipe,
+        // so a run that read the chat at schedule time would index stale text.
+        h.indexer.schedule();
+        h.setChat(chat([msg("m1", "second answer")]));
+
+        await sleep(40);
+
+        expect(h.emb.calls).toEqual([["second answer"]]);
+        expect((await h.indexer.status("fake-model")).state).toBe("up-to-date");
+
+        h.indexer.dispose();
+    });
+
+    test("switching a swipe re-embeds, and switching back re-embeds again", async () => {
+        const h = harness();
+        h.setChat(chat([msg("m1", "first answer")]));
+        await h.indexer.indexAll();
+
+        h.setChat(chat([msg("m1", "second answer, a new swipe")]));
+        await h.indexer.reconcileNow();
+
+        h.setChat(chat([msg("m1", "first answer")]));
+        await h.indexer.reconcileNow();
+
+        expect(h.emb.calls).toEqual([
+            ["first answer"],
+            ["second answer, a new swipe"],
+            ["first answer"],
+        ]);
+        expect((await h.indexer.status("fake-model")).state).toBe("up-to-date");
+    });
+});
+
+describe("createOrphanSweeper", () => {
+    /** A chat that no longer exists, with an index on disk. */
+    async function orphanedStorage() {
+        const h = harness();
+        h.setChat(chat([msg("m1", "gone with the chat")], "deleted-chat"));
+        await h.indexer.indexAll();
+
+        return h;
+    }
+
+    function sweeperFor(h: ReturnType<typeof harness>, chatIds: string[], clock: { now: number }) {
+        const listed: number[] = [];
+        const sweeper = createOrphanSweeper({
+            storage: h.storage,
+            listChatIds: async () => {
+                listed.push(clock.now);
+                return chatIds;
+            },
+            trace: h.trace,
+            now: () => clock.now,
+        });
+
+        return { sweeper, listed };
+    }
+
+    test("deleting a chat removes its index on the next sweep", async () => {
+        const h = await orphanedStorage();
+        const clock = { now: 1000 };
+        const { sweeper } = sweeperFor(h, ["chat-1"], clock);
+
+        expect(await loadIndex(h.storage, "deleted-chat")).not.toBeNull();
+
+        await sweeper.maybeSweep();
+
+        expect(await loadIndex(h.storage, "deleted-chat")).toBeNull();
+        expect(h.trace.logs().some((entry) => entry.message === "index: removed 1 orphaned indexes")).toBe(true);
+    });
+
+    test("is throttled to one sweep per minute", async () => {
+        const h = await orphanedStorage();
+        const clock = { now: 1000 };
+        const { sweeper, listed } = sweeperFor(h, ["chat-1"], clock);
+
+        await sweeper.maybeSweep();
+        expect(listed).toHaveLength(1);
+
+        clock.now += 59_000;
+        await sweeper.maybeSweep();
+        expect(listed).toHaveLength(1);
+
+        clock.now += 1_000;
+        await sweeper.maybeSweep();
+        expect(listed).toHaveLength(2);
+    });
+
+    test("an empty chat list is a failed listing: nothing is removed and the window stays shut", async () => {
+        const h = await orphanedStorage();
+        const clock = { now: 1000 };
+        const { sweeper, listed } = sweeperFor(h, [], clock);
+
+        await sweeper.maybeSweep();
+
+        expect(listed).toHaveLength(1);
+        expect(await loadIndex(h.storage, "deleted-chat")).not.toBeNull();
+
+        clock.now += 1_000;
+        await sweeper.maybeSweep();
+
+        // The failed listing must not count as a sweep, or a 60 s outage after
+        // startup would hide the next real one.
+        expect(listed).toHaveLength(2);
+    });
+
+    test("the activation sweep ignores the throttle and concurrent calls share one run", async () => {
+        const h = await orphanedStorage();
+        const clock = { now: 1000 };
+        const { sweeper, listed } = sweeperFor(h, ["chat-1"], clock);
+
+        await Promise.all([sweeper.maybeSweep(), sweeper.maybeSweep()]);
+        await sweeper.sweep();
+
+        expect(listed).toHaveLength(2);
     });
 });

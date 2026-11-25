@@ -11,16 +11,15 @@
  * indexing is fire-and-forget.
  */
 
-import type { PluginAppSnapshot, SmileyPluginApi } from "../types/smileychat-plugin-api";
+import type { SmileyPluginApi } from "../types/smileychat-plugin-api";
 
 import type { MemoryController } from "./controller";
 import { EmbeddingError, createEmbedder, testEmbedding } from "./embedder";
 import type { Embedder } from "./embedder";
 import { createHostClient } from "./host-client";
-import { sweepOrphans } from "./index-store";
-import { createIndexer } from "./indexer";
+import { createIndexer, createOrphanSweeper } from "./indexer";
 import { buildInjection, runWithTimeout } from "./injection";
-import { chatMessagesForIndex, retrievalMessages } from "./messages";
+import { chatMessagesForIndex, messagesFingerprint, retrievalMessages } from "./messages";
 import { MemoryModal } from "./modal";
 import { emptyRetrievalResult, retrieveMemories } from "./retrieval";
 import type { RetrievalResult } from "./retrieval";
@@ -101,6 +100,14 @@ export async function activate(api: SmileyPluginApi) {
         getSettings: () => settings,
         getEmbedder: () => embedder,
         getChat: activeChat,
+        trace,
+    });
+
+    // Index files outlive the chat they belong to; without a delete event the
+    // only moments a stale one can be noticed are activation and chat switches.
+    const sweeper = createOrphanSweeper({
+        storage: api.storage,
+        listChatIds: async () => (await api.actions.listChats()).map((chat) => chat.id),
         trace,
     });
 
@@ -277,21 +284,43 @@ export async function activate(api: SmileyPluginApi) {
         },
     };
 
-    // Indexing trigger: chat switches, new messages, deletions. Streaming turns
-    // rewrite the last swipe's text without changing the message list, so the
-    // signature ignores them and no run is queued per token.
-    let chatSignature = "";
+    // Indexing trigger for chat switches, new messages, deletions, swipes and
+    // edits. Message ids alone miss a new swipe: the id stays put while
+    // `swipes` grows and `activeSwipeIndex` moves, so the visible text is
+    // fingerprinted too. A streaming turn changes that fingerprint on every
+    // token; `indexer.schedule()` debounces, so tokens coalesce into one run
+    // after the text settles. The panel is only re-rendered on structural
+    // changes, never per token.
+    let lastStructuralKey = "";
+    let lastContentKey = "";
+    let lastChatKey = "";
 
     const unsubscribeState = api.state.subscribe((snapshot) => {
-        const signature = snapshotSignature(snapshot);
+        const chatId = snapshot.activeChat?.id ?? "";
+        const structuralKey = `${chatId}|${snapshot.messages.map((message) => message.id).join(",")}`;
+        const contentKey = `${structuralKey}|${messagesFingerprint(snapshot.messages)}`;
 
-        if (signature === chatSignature) {
+        if (contentKey === lastContentKey) {
             return;
         }
 
-        chatSignature = signature;
+        lastContentKey = contentKey;
+
+        // The run reads the chat when it fires (see `getChat`), never here: the
+        // update middleware is called before the app applies the new swipe.
         indexer.schedule();
-        notify();
+
+        if (chatId !== lastChatKey) {
+            lastChatKey = chatId;
+            // No delete event exists, so a chat switch is the moment a deleted
+            // chat's index is most likely already gone. Throttled in the sweeper.
+            void sweeper.maybeSweep();
+        }
+
+        if (structuralKey !== lastStructuralKey) {
+            lastStructuralKey = structuralKey;
+            notify();
+        }
     });
 
     // Edits, swipes and regenerations keep the message id, so they only reach us
@@ -332,30 +361,11 @@ export async function activate(api: SmileyPluginApi) {
     });
 
     // Deleting a chat leaves its index behind (the app has no delete event), so
-    // the registry is swept against the real chat list once the app is settled.
+    // the registry is swept against the real chat list once the app is settled,
+    // and again on chat switches through the throttle.
     const sweepTimer = setTimeout(() => {
-        void sweepIndexes();
+        void sweeper.sweep();
     }, SWEEP_DELAY_MS);
-
-    async function sweepIndexes(): Promise<void> {
-        try {
-            const chats = await api.actions.listChats();
-
-            // An empty list is "the listing failed", not "every chat is gone";
-            // sweeping then would delete indexes that cost money to rebuild.
-            if (chats.length === 0) {
-                return;
-            }
-
-            const removed = await sweepOrphans(api.storage, new Set(chats.map((chat) => chat.id)));
-
-            if (removed.length > 0) {
-                trace.log("info", "index", `index: removed ${removed.length} orphaned indexes`, { ids: removed });
-            }
-        } catch (error) {
-            trace.log("debug", "index", `index: orphan sweep skipped (${describe(error)})`);
-        }
-    }
 
     api.ui.addStyles(styles);
 
@@ -468,17 +478,6 @@ function asDetail(detail: unknown): Record<string, unknown> | undefined {
     }
 
     return { detail };
-}
-
-/**
- * Identity of the visible conversation for the state subscription: the chat and
- * the message ids. Text is deliberately excluded so a streaming turn does not
- * queue an index run per token; edits arrive through the update middleware.
- */
-function snapshotSignature(snapshot: PluginAppSnapshot): string {
-    const chatId = snapshot.activeChat?.id ?? "";
-
-    return `${chatId}|${snapshot.messages.map((message) => message.id).join(",")}`;
 }
 
 function describe(error: unknown): string {

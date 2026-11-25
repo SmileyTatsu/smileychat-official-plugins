@@ -9,7 +9,7 @@
 
 import type { Message } from "../types/smileychat-plugin-api";
 
-import { cleanMessageText } from "./chunking";
+import { cleanMessageText, hashText } from "./chunking";
 import type { ChatMessageLike } from "./reconcile";
 
 export type MessageReaders = {
@@ -99,4 +99,34 @@ export function chatMessagesForIndex(messages: Message[], readers: MessageReader
 /** The shape `retrieveMemories` and the recent-window logic read. */
 export function retrievalMessages(messages: Message[], readers: MessageReaders = {}): { id: string; text: string }[] {
     return chatMessagesForIndex(messages, readers).map((message) => ({ id: message.id, text: message.text }));
+}
+
+/** How many trailing messages the scheduling fingerprint looks at. */
+const FINGERPRINT_WINDOW = 3;
+
+/**
+ * Identity of the *visible* conversation for the state subscription.
+ *
+ * Message ids alone are not enough: generating or switching a swipe appends to
+ * `swipes` and moves `activeSwipeIndex` while the id stays put, so an ids-only
+ * key never noticed the text the index should now hold. The active content is
+ * hashed as well, which a streaming turn changes on every token; the indexer's
+ * debounce is what turns that into one run after the text settles.
+ *
+ * Only the tail is fingerprinted: an older message is edited through the app's
+ * update middleware, which schedules a run on its own.
+ */
+export function messagesFingerprint(messages: Message[], window = FINGERPRINT_WINDOW): string {
+    const start = Math.max(0, messages.length - Math.max(1, window));
+    const parts: string[] = [];
+
+    for (let i = start; i < messages.length; i += 1) {
+        const message = messages[i];
+
+        parts.push(
+            `${message.id}:${message.activeSwipeIndex}:${message.swipes.length}:${hashText(activeSwipeContent(message))}`,
+        );
+    }
+
+    return parts.join("|");
 }

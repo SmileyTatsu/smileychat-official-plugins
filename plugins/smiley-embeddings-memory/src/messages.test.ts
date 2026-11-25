@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Message, MessageSwipe } from "../types/smileychat-plugin-api";
 
-import { activeSwipeContent, chatMessagesForIndex, isIndexableMessage, isStreamingMessage, retrievalMessages } from "./messages";
+import { activeSwipeContent, chatMessagesForIndex, isIndexableMessage, isStreamingMessage, messagesFingerprint, retrievalMessages } from "./messages";
 
 function swipe(content: string, extra: Record<string, unknown> = {}): MessageSwipe {
     // The spread comes first so an extra field the published typings do not
@@ -127,5 +127,47 @@ describe("retrievalMessages", () => {
 
         expect(first).toEqual({ id: "m1", text: "Hi" });
         expect(Object.keys(first)).toEqual(["id", "text"]);
+    });
+});
+
+describe("messagesFingerprint", () => {
+    test("is stable while the conversation does not change", () => {
+        const messages = [message("one", { id: "m1" }), message("two", { id: "m2" })];
+
+        expect(messagesFingerprint(messages)).toBe(messagesFingerprint(structuredClone(messages)));
+    });
+
+    test("changes when a swipe is added and selected, although no id changes", () => {
+        const before = [message("first answer")];
+        // Generating a swipe appends to `swipes` and selects it; the message id
+        // is the same, which is exactly what the old scheduling key missed.
+        const after = [
+            message("", { activeSwipeIndex: 1 }, [swipe("first answer"), swipe("second answer")]),
+        ];
+
+        expect(after[0].id).toBe(before[0].id);
+        expect(messagesFingerprint(after)).not.toBe(messagesFingerprint(before));
+    });
+
+    test("changes when the user swipes back", () => {
+        const second = message("", { activeSwipeIndex: 1 }, [swipe("first answer"), swipe("second answer")]);
+        const backToFirst = message("", { activeSwipeIndex: 0 }, [swipe("first answer"), swipe("second answer")]);
+
+        expect(messagesFingerprint([backToFirst])).not.toBe(messagesFingerprint([second]));
+    });
+
+    test("changes when a message is edited in place", () => {
+        expect(messagesFingerprint([message("edited text")])).not.toBe(messagesFingerprint([message("original text")]));
+    });
+
+    test("only covers the tail: an old message is the middleware's job", () => {
+        const messages = [message("old", { id: "m1" }), message("b", { id: "m2" }), message("c", { id: "m3" }), message("d", { id: "m4" })];
+        const editedOld = [message("old but edited", { id: "m1" }), ...messages.slice(1)];
+
+        expect(messagesFingerprint(editedOld)).toBe(messagesFingerprint(messages));
+    });
+
+    test("notices a growing last message, which the debounce has to coalesce", () => {
+        expect(messagesFingerprint([message("typing")])).not.toBe(messagesFingerprint([message("typing more")]));
     });
 });
