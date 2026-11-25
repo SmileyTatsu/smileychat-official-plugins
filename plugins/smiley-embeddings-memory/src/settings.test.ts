@@ -346,3 +346,13 @@ describe("activeModelOf", () => {
         expect(model.id).toBe("api:localhost:8080/m");
     });
 });
+
+describe("query defaults", () => {
+    test("embeds only the newest message by default", () => {
+        // Two query messages let the previous character reply drag unrelated turns into a match
+        // on repetitive history (4 of 6 unrelated turns injected versus 0 of 6 with one message).
+        expect(DEFAULT_SETTINGS.queryMessages).toBe(1);
+        expect(normalizeSettings({}).queryMessages).toBe(1);
+        expect(normalizeSettings({ queryMessages: 3 }).queryMessages).toBe(3);
+    });
+});

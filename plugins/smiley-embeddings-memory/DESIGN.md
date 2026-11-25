@@ -113,7 +113,7 @@ The app has no chat-deleted, chat-forked or chat-switched events (only `register
 
 On each prompt build (`registerPromptInjector`, awaited, wrapped so it **never throws** — an uncaught injector aborts the whole prompt build — and bounded by a timeout, default 8 s, returning `[]` with `no match: timeout`):
 
-1. Take the last `N` messages (default 2) from `context.messages` and embed each as a query (one batched request); a chunk's score is its max over the queries.
+1. Take the last `N` messages (default 1) from `context.messages` and embed each as a query (one batched request); a chunk's score is its max over the queries. The default is 1 because, on three test chats, a second query message (the previous character reply) inherited high scores against repetitive history and made unrelated turns inject memories (4 of 6 with N=2 versus 0 of 6 with N=1); raise it for chats whose context lives in the previous reply.
 2. Exclude chunks whose message is among the last `R` messages (default 5), count the exclusions.
 3. Keep chunks with cosine ≥ threshold (default 0.3), top-K (default 3), merge adjacent chunks of the same message, order chronologically.
 4. Render the editable template (default: "Relevant memories of past events in this conversation (they already happened; do not repeat them as new):\n{{memories}}"), cap at the plugin's own token limit (default 600, `api.model.estimateTokens`; lowest-score memories dropped first), also bounded by `getContextBudget`.

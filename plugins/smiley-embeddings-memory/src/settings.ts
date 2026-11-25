@@ -101,7 +101,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     qwenTask: DEFAULT_QWEN3_TASK,
     chunkSize: 400,
     chunkOverlap: 40,
-    queryMessages: 2,
+    queryMessages: 1,
     topK: 3,
     threshold: null,
     retain: 5,
