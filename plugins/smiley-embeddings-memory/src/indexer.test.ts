@@ -11,6 +11,7 @@ import type { ChatMessageLike } from "./reconcile";
 import { DEFAULT_SETTINGS } from "./settings";
 import type { PluginSettings } from "./settings";
 import { createTrace } from "./trace";
+import { describeIndexState } from "./ui-kit";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -197,7 +198,9 @@ describe("createIndexer", () => {
             activeModelId: "fake-model",
         });
 
-        expect(h.trace.logs().some((entry) => /^index: 2 chunks from 2 messages in \d+ ms$/.test(entry.message))).toBe(true);
+        expect(
+            h.trace.logs().some((entry) => /^index: 2 chunks from 2\/2 messages in \d+ ms, 2 chunks in the index$/.test(entry.message)),
+        ).toBe(true);
     });
 
     test("a new message is the only thing embedded on the next run", async () => {
@@ -281,7 +284,13 @@ describe("createIndexer", () => {
         await run;
 
         expect((await loadIndex(h.storage, "chat-1"))?.chunks).toHaveLength(16);
-        expect(h.trace.logs().some((entry) => entry.message === "index: cancelled after 16/20 messages")).toBe(true);
+
+        // The cancel line reports what this run actually wrote, not the count a
+        // returned value would have lost on the way out of the abort.
+        const cancelLine = h.trace.logs().find((entry) => entry.message.startsWith("index: cancelled after"));
+
+        expect(cancelLine?.message).toBe("index: cancelled after 16/20 messages, 16 chunks added, 16 chunks in the index");
+        expect(cancelLine?.detail).toEqual({ chatId: "chat-1", chunksAdded: 16, chunksTotal: 16 });
 
         const cancelled = await h.indexer.status("fake-model");
 
@@ -405,9 +414,32 @@ describe("createIndexer", () => {
 
         const status = await h.indexer.status("fake-model");
 
-        expect(status.state).toBe("stale");
+        // Nothing is left on disk, so the chat was never indexed as far as the
+        // chip is concerned; the pending count still shows in the panel.
+        expect(status.state).toBe("empty");
         expect(status.chunks).toBe(0);
         expect(status.messagesIndexed).toBe(0);
+        expect(status.messagesPending).toBe(1);
+    });
+
+    test("empty means never indexed, stale means an existing index that fell behind", async () => {
+        const h = harness();
+        h.setChat(chat([msg("m1", "Hello there")]));
+
+        const fresh = await h.indexer.status("fake-model");
+
+        expect(fresh.state).toBe("empty");
+        expect(fresh.messagesPending).toBe(1);
+        expect(describeIndexState(fresh.state).label).toBe("Not indexed yet");
+
+        await h.indexer.indexAll();
+        h.setChat(chat([msg("m1", "Hello there"), msg("m2", "Second message")]));
+
+        const behind = await h.indexer.status("fake-model");
+
+        expect(behind.state).toBe("stale");
+        expect(behind.messagesPending).toBe(1);
+        expect(behind.detail).toContain("1 messages waiting");
     });
 
     test("an API source needs consent before anything is sent", async () => {
@@ -440,9 +472,9 @@ describe("createIndexer", () => {
 
         const waiting = await h.indexer.status("fake-model");
 
-        expect(waiting.state).toBe("stale");
+        expect(waiting.state).toBe("empty");
         expect(waiting.messagesPending).toBe(25);
-        expect(waiting.detail).toContain("25 messages waiting");
+        expect(waiting.detail).toBeUndefined();
 
         await h.indexer.indexAll();
 
@@ -496,7 +528,7 @@ describe("createIndexer", () => {
 
         const waiting = await h.indexer.status("fake-model");
 
-        expect(waiting.state).toBe("stale");
+        expect(waiting.state).toBe("empty");
         expect(waiting.messagesPending).toBe(2);
 
         await h.indexer.indexAll();

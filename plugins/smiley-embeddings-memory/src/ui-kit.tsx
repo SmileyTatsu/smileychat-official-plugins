@@ -174,7 +174,7 @@ export function describeIndexState(state: IndexState): { label: string; tone: To
         case "error":
             return { label: "Error", tone: "error" };
         case "empty":
-            return { label: "Not indexed", tone: "neutral" };
+            return { label: "Not indexed yet", tone: "neutral" };
         case "disabled":
             return { label: "Off", tone: "neutral" };
         case "no-chat":

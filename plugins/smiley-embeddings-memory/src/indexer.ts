@@ -100,7 +100,14 @@ type RunState = {
     cancelling: boolean;
     done: number;
     total: number;
+    /** Chunks in the index right now, updated after each message is appended. */
     chunks: number;
+    /**
+     * Chunks this run wrote. Lives on the run, not in a local of `execute`: an
+     * abort unwinds out of `embedPlan`, so a returned count was always 0 while
+     * the index already held the chunks that did finish.
+     */
+    added: number;
     startedAt: string;
 };
 
@@ -332,6 +339,7 @@ export function createIndexer(deps: IndexerDeps): Indexer {
             done: 0,
             total: plan.toEmbed.length,
             chunks: index?.chunks.length ?? 0,
+            added: 0,
             startedAt: new Date(startedAt).toISOString(),
         };
 
@@ -341,17 +349,19 @@ export function createIndexer(deps: IndexerDeps): Indexer {
         clearFailure();
         notify();
 
-        let added = 0;
-
         try {
-            added = await embedPlan(plan, index, chatId, embedder, settings, run);
+            await embedPlan(plan, index, chatId, embedder, settings, run);
         } catch (error) {
             if (isAbort(error)) {
                 // Cancelling is a normal outcome: the persisted messages stay,
-                // and the next trigger picks up the rest.
-                trace.log("info", "index", `index: cancelled after ${run.done}/${run.total} messages`, {
-                    chunks: added,
-                });
+                // and the next trigger picks up the rest. The counts come from
+                // the run, so they describe what the index actually kept.
+                trace.log(
+                    "info",
+                    "index",
+                    `index: cancelled after ${run.done}/${run.total} messages, ${run.added} chunks added, ${run.chunks} chunks in the index`,
+                    { chatId, chunksAdded: run.added, chunksTotal: run.chunks },
+                );
             } else if (error instanceof DimensionMismatch) {
                 fail("model-mismatch", error.message);
             } else {
@@ -362,11 +372,11 @@ export function createIndexer(deps: IndexerDeps): Indexer {
             notify();
         }
 
-        if (added > 0) {
+        if (run.added > 0) {
             trace.log(
                 "info",
                 "index",
-                `index: ${added} chunks from ${run.done} messages in ${now() - startedAt} ms`,
+                `index: ${run.added} chunks from ${run.done}/${run.total} messages in ${now() - startedAt} ms, ${run.chunks} chunks in the index`,
                 { chatId, model: model.id },
             );
         }
@@ -383,7 +393,7 @@ export function createIndexer(deps: IndexerDeps): Indexer {
         embedder: Embedder,
         settings: PluginSettings,
         run: RunState,
-    ): Promise<number> {
+    ): Promise<void> {
         const chunkOptions = { size: settings.chunkSize, overlap: settings.chunkOverlap };
 
         type Prepared = { message: ChatMessageLike; hash: string; texts: string[] };
@@ -397,7 +407,6 @@ export function createIndexer(deps: IndexerDeps): Indexer {
         // A model outside the catalog has no known dimension, so the index is
         // created from the first vector instead of guessing one.
         let target: ChatIndex | null = index;
-        let added = 0;
 
         const pendingVectors = new Map<Prepared, Float32Array[]>();
 
@@ -436,7 +445,7 @@ export function createIndexer(deps: IndexerDeps): Indexer {
                 item.texts.map((text, i) => ({ text, vector: vectors[i] })),
             );
 
-            added += item.texts.length;
+            run.added += item.texts.length;
             run.done += 1;
             run.chunks = target.chunks.length;
             notify();
@@ -510,8 +519,6 @@ export function createIndexer(deps: IndexerDeps): Indexer {
         }
 
         await flush();
-
-        return added;
     }
 
     function progress(): IndexerProgress {
@@ -901,15 +908,20 @@ function deriveState(
         return "model-mismatch";
     }
 
-    // `stale` wins over `empty`: a chat whose index does not exist but has
-    // messages waiting is exactly what "Index all" is for, and it is also the
-    // state an API backlog waits in.
-    if (input.pending > 0) {
-        return "stale";
+    // A chat that was never indexed has no chunks *and* no message entries.
+    // That is `empty` ("Not indexed yet") even with messages waiting: `stale`
+    // is reserved for an index that exists and is behind, which is what the
+    // chip has to say — a fresh chat reported as "Stale" reads as a broken
+    // index rather than as work not done yet. Pending counts stay visible in
+    // the panel either way.
+    const hasIndex = input.index !== null && (input.index.chunks.length > 0 || Object.keys(input.index.messages).length > 0);
+
+    if (!hasIndex) {
+        return "empty";
     }
 
-    if (!input.index || input.index.chunks.length === 0) {
-        return "empty";
+    if (input.pending > 0) {
+        return "stale";
     }
 
     return "up-to-date";
