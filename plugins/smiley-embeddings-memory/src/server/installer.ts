@@ -53,21 +53,21 @@ const MANUAL_MODEL_MESSAGE = "A manual model path is set; clear it to download o
 /**
  * The one not-installed text, shared by /start, /embed (through resolveLaunch) and the setup panel.
  *
- * device `auto` gets a sentence that says what is missing in user terms — "no build installed for
- * auto" described our internal setting, not the user's problem.
+ * It states the FACT only: the client already appends its own hint for `not-installed` ("Open
+ * Semantic Memory settings and press Install and test."), so repeating the instruction here
+ * printed the same sentence twice in the error box. device `auto` also gets user words instead of
+ * "installed for auto", which described our setting rather than the user's problem.
  */
 function noBinaryMessage(device: DeviceChoice): string {
-    const next = "Open Semantic Memory settings and press Install and test.";
-
     if (device === "gpu") {
-        return `No GPU build of llama.cpp is installed. ${next}`;
+        return "No GPU build of llama.cpp is installed.";
     }
 
     if (device === "cpu") {
-        return `No CPU build of llama.cpp is installed. ${next}`;
+        return "No CPU build of llama.cpp is installed.";
     }
 
-    return `The local embedding program is not installed yet. ${next}`;
+    return "The local embedding program is not installed yet.";
 }
 
 type InstallMarker = {

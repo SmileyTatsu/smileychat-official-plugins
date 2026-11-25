@@ -447,15 +447,14 @@ describe("device-aware status", () => {
 });
 
 describe("resolveLaunch refusal text", () => {
-    test("names what is missing for each device and the next step", async () => {
+    test("names what is missing for each device, without the client's hint", async () => {
         const modelPath = await writeFileOfSize(join(workDir, "manual.gguf"), 64);
         const { installer } = harness({ nvidiaSmi: null });
-        const next = "Open Semantic Memory settings and press Install and test.";
 
         const expected: Record<string, string> = {
-            auto: `The local embedding program is not installed yet. ${next}`,
-            gpu: `No GPU build of llama.cpp is installed. ${next}`,
-            cpu: `No CPU build of llama.cpp is installed. ${next}`,
+            auto: "The local embedding program is not installed yet.",
+            gpu: "No GPU build of llama.cpp is installed.",
+            cpu: "No CPU build of llama.cpp is installed.",
         };
 
         for (const [device, message] of Object.entries(expected)) {
@@ -469,8 +468,11 @@ describe("resolveLaunch refusal text", () => {
                 return;
             }
 
-            // The server's own message: main.ts must pass it on, not replace it with "model missing".
+            // The server states the fact only: the client appends the hint, and repeating it here
+            // printed the same sentence twice in the error box.
             expect(resolved.error).toBe(message);
+            expect(resolved.error).not.toContain("Open Semantic Memory settings");
+            expect(resolved.error).not.toContain("press Install");
         }
     });
 
@@ -488,7 +490,7 @@ describe("resolveLaunch refusal text", () => {
         }
 
         expect(resolved.error).toBe(
-            "No CPU build of llama.cpp is installed. Open Semantic Memory settings and press Install and test.",
+            "No CPU build of llama.cpp is installed.",
         );
     });
 });
@@ -1001,7 +1003,7 @@ describe("resolveLaunch", () => {
             return;
         }
 
-        expect(missing.error).toBe("No GPU build of llama.cpp is installed. Open Semantic Memory settings and press Install and test.");
+        expect(missing.error).toBe("No GPU build of llama.cpp is installed.");
     });
 
     test("without an NVIDIA GPU the cuda build is skipped", async () => {
