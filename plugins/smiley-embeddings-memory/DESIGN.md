@@ -119,7 +119,7 @@ On each prompt build (`registerPromptInjector`, awaited, wrapped so it **never t
 4. Render the editable template (default: "Relevant memories of past events in this conversation (they already happened; do not repeat them as new):\n{{memories}}"), cap at the plugin's own token limit (default 600, `api.model.estimateTokens`; lowest-score memories dropped first), also bounded by `getContextBudget`.
 5. Return `{ source: "plugin", role: "system", anchor: "at-depth", depth: 2, priority: 10, tokenBudgetBehavior: "counted" }` (priority below the summarizer's 20 so these are trimmed first). Because at-depth `n` lands before the n-th message from the end, only the tail changes and the cached prefix is untouched.
 
-Logs (`api.logger` + an in-memory ring buffer of 200 events shown in the viewer): `match: 3 recuerdos (scores 0.71, 0.58, 0.44) → 212 tokens`, `no match: <reason>` with reasons `empty index`, `model mismatch`, `all below threshold (best 0.21)`, `all inside recent window`, `timeout`, `embedding error: <actionable text>`; indexing lines with chunks and ms; server module logs download, start (backend, layers), idle stop and exit.
+Logs (`api.logger` + an in-memory ring buffer of 200 events shown in the viewer): `match: 3 memories (scores 0.71, 0.58, 0.44) -> 212 tokens`, `no match: <reason>` with reasons `empty index`, `model mismatch`, `all below threshold (best 0.21)`, `all inside recent window`, `timeout`, `embedding error: <actionable text>`; indexing lines with chunks and ms; server module logs download, start (backend, layers), idle stop and exit.
 
 Query embeddings are cached by text hash (last 32) so swipes and regenerations do not re-embed.
 
