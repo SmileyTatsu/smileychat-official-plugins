@@ -8,6 +8,7 @@
 
 import type { Embedder } from "./embedder";
 import { EmbeddingError } from "./embedder";
+import { hashText } from "./chunking";
 import { modelMatches } from "./index-store";
 import type { ChatIndex, IndexedChunk } from "./index-store";
 import type { PluginSettings } from "./settings";
@@ -31,14 +32,17 @@ export type Memory = {
     ord: number;
     score: number;
     text: string;
-    /** Distance from the newest message (0 = newest); -1 when it left the chat. */
+    /** Distance from the newest message (0 = newest). */
     messagesAgo: number;
 };
 
 export type RetrievalInput = {
     index: ChatIndex | null;
-    /** Clean, chronological chat text. */
-    messages: { id: string; text: string }[];
+    /**
+     * Clean, chronological chat text. `streaming` marks a turn that is still
+     * being generated; its stored chunks stay usable (see `staleChunks`).
+     */
+    messages: { id: string; text: string; streaming?: boolean }[];
     settings: PluginSettings;
     embedder: Embedder;
     estimateTokens: (text: string) => number;
@@ -55,6 +59,8 @@ export type RetrievalResult = {
     detail?: string;
     candidates: number;
     skippedRecent: number;
+    /** Chunks dropped because their message was deleted, edited or swiped away. */
+    skippedStale: number;
     belowThreshold: number;
     best: number;
     droppedByTokenCap: number;
@@ -83,6 +89,7 @@ export function emptyRetrievalResult(
         detail,
         candidates: 0,
         skippedRecent: 0,
+        skippedStale: 0,
         belowThreshold: 0,
         best: 0,
         droppedByTokenCap: 0,
@@ -106,19 +113,30 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
         tokens: 0,
         candidates: 0,
         skippedRecent: 0,
+        skippedStale: 0,
         belowThreshold: 0,
         best: 0,
         droppedByTokenCap: 0,
         queries: [],
     };
 
-    const finish = (line: string, reason?: NoMatchReason, detail?: string): RetrievalResult => ({
-        ...working,
-        reason,
-        detail,
-        durationMs: Math.round(performance.now() - started),
-        line,
-    });
+    const finish = (line: string, reason?: NoMatchReason, detail?: string): RetrievalResult => {
+        // Only shown when something was actually dropped, so the steady-state
+        // lines keep their shape; the counter is what tells the user that the
+        // index is behind the chat.
+        const stale =
+            working.skippedStale > 0
+                ? ` (${working.skippedStale} stale ${working.skippedStale === 1 ? "chunk" : "chunks"} skipped)`
+                : "";
+
+        return {
+            ...working,
+            reason,
+            detail,
+            durationMs: Math.round(performance.now() - started),
+            line: `${line}${stale}`,
+        };
+    };
 
     if (!settings.enabled) {
         return finish("no match: disabled", "disabled");
@@ -170,8 +188,13 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
     }
 
     const recent = recentMessageIds(messages, settings.retain);
-    const { scores, skipped, best } = scoreChunks(queryVectors, index.chunks, (chunk) =>
-        recent.has(index.chunks[chunk].messageId),
+    // Stale chunks are dropped before ranking, so they never take a top-K slot
+    // from a message that still exists with the text that was embedded.
+    const stale = staleChunks(index, messages);
+    const { scores, skipped, best } = scoreChunks(
+        queryVectors,
+        index.chunks,
+        (chunk) => stale.has(chunk) || recent.has(index.chunks[chunk].messageId),
     );
     // The embedder knows which prefix profile (and therefore which model family)
     // is answering, which is what decides the sensible cut-off.
@@ -184,13 +207,20 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
     // calibration note on DEFAULT_THRESHOLDS.
     const threshold = effectiveThreshold(settings, embedder.model.prefixProfile);
 
-    working.skippedRecent = skipped;
+    working.skippedRecent = skipped - stale.size;
+    working.skippedStale = stale.size;
     working.candidates = scores.size;
     working.best = best;
 
     if (scores.size === 0) {
-        // Every chunk belongs to a message that is still in the recent window.
-        return finish("no match: all inside recent window", "all-in-recent-window");
+        // Every chunk was excluded before ranking. Which filter did it changes
+        // the explanation; the outcome (and the reason code) is the same.
+        const onlyStale = working.skippedRecent === 0;
+
+        return finish(
+            onlyStale ? "no match: no valid chunks" : "no match: all inside recent window",
+            "all-in-recent-window",
+        );
     }
 
     const above = [...scores.entries()]
@@ -258,7 +288,7 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
 
 /** Last `count` non-empty texts, oldest first so the batched request is stable. */
 function buildQueries(
-    messages: { id: string; text: string }[],
+    messages: RetrievalInput["messages"],
     count: number,
     draft: string | undefined,
 ): string[] {
@@ -280,7 +310,7 @@ function buildQueries(
     return queries.reverse();
 }
 
-function recentMessageIds(messages: { id: string; text: string }[], retain: number): Set<string> {
+function recentMessageIds(messages: RetrievalInput["messages"], retain: number): Set<string> {
     const ids = new Set<string>();
 
     if (retain <= 0) {
@@ -292,6 +322,55 @@ function recentMessageIds(messages: { id: string; text: string }[], retain: numb
     }
 
     return ids;
+}
+
+/**
+ * Chunks that no longer describe the chat, as positions in `index.chunks`.
+ *
+ * Index cleanup is asynchronous: the reconciler is debounced after a prompt is
+ * built and only notices a deleted *old* message on the next trigger, so for at
+ * least one turn the index still holds text the user threw away. A chunk is
+ * trustworthy only while its message is still in the chat and its text still
+ * hashes to what was embedded — the exact comparison `reconcile` makes, so a
+ * deleted message, an edit or a swipe change all land here.
+ *
+ * A turn that is still streaming is not compared: its text changes on every
+ * token, and reconcile deliberately keeps the previous chunks usable until the
+ * generation settles, so dropping them here would lose real memories.
+ *
+ * A chunk without a stored hash has nothing to compare against (an index
+ * written by an older build, or a hand-built one); its message is present, so
+ * it is kept rather than guessed away.
+ */
+function staleChunks(index: ChatIndex, messages: RetrievalInput["messages"]): Set<number> {
+    const current = new Map<string, string | null>();
+
+    for (const message of messages) {
+        // `null` = present but not verifiable yet (still generating).
+        current.set(message.id, message.streaming ? null : hashText(message.text));
+    }
+
+    const stale = new Set<number>();
+
+    index.chunks.forEach((chunk, position) => {
+        if (!current.has(chunk.messageId)) {
+            stale.add(position);
+            return;
+        }
+
+        const hash = current.get(chunk.messageId);
+        const stored = index.messages[chunk.messageId]?.hash;
+
+        if (hash === null || hash === undefined || stored === undefined) {
+            return;
+        }
+
+        if (hash !== stored) {
+            stale.add(position);
+        }
+    });
+
+    return stale;
 }
 
 /**
@@ -339,13 +418,13 @@ function scoreChunks(
  * Adjacency is decided per message by `ord`, never by index position:
  * `appendMessageChunks` re-appends an edited message at the end of the index, so
  * index order stops matching chat order after the first edit. The prompt order
- * therefore comes from `messages` itself; a memory whose message has left the
- * chat has no position, so it goes first and keeps its relative index order.
+ * therefore comes from `messages` itself; chunks whose message left the chat were
+ * already dropped as stale, so every memory has a position.
  */
 function mergeChunks(
     index: ChatIndex,
     selected: { chunk: number; score: number }[],
-    messages: { id: string; text: string }[],
+    messages: RetrievalInput["messages"],
 ): Memory[] {
     const ages = messageAges(messages);
     const positions = messagePositions(messages);
@@ -364,17 +443,16 @@ function mergeChunks(
         }
     }
 
-    const merged: { memory: Memory; firstChunk: number }[] = [];
+    const merged: Memory[] = [];
 
     for (const [messageId, entries] of byMessage) {
         const sorted = [...entries].sort((a, b) => index.chunks[a.chunk].ord - index.chunks[b.chunk].ord);
         let memory: Memory | null = null;
-        let firstChunk = 0;
         let lastOrd = -1;
 
         const flush = () => {
             if (memory) {
-                merged.push({ memory, firstChunk });
+                merged.push(memory);
             }
         };
 
@@ -398,33 +476,21 @@ function mergeChunks(
                 text: chunk.text,
                 messagesAgo: ages.get(messageId) ?? -1,
             };
-            firstChunk = entry.chunk;
             lastOrd = chunk.ord;
         }
 
         flush();
     }
 
-    merged.sort((a, b) => {
-        const leftKnown = a.memory.messagesAgo !== -1;
-        const rightKnown = b.memory.messagesAgo !== -1;
+    merged.sort(
+        (a, b) => (positions.get(a.messageId) ?? 0) - (positions.get(b.messageId) ?? 0),
+    );
 
-        if (leftKnown !== rightKnown) {
-            return leftKnown ? 1 : -1;
-        }
-
-        if (!leftKnown) {
-            return a.firstChunk - b.firstChunk;
-        }
-
-        return (positions.get(a.memory.messageId) ?? 0) - (positions.get(b.memory.messageId) ?? 0);
-    });
-
-    return merged.map((entry) => entry.memory);
+    return merged;
 }
 
 /** Position counted from the newest message; absent messages stay -1. */
-function messageAges(messages: { id: string; text: string }[]): Map<string, number> {
+function messageAges(messages: RetrievalInput["messages"]): Map<string, number> {
     const ages = new Map<string, number>();
 
     for (let i = 0; i < messages.length; i += 1) {
@@ -435,7 +501,7 @@ function messageAges(messages: { id: string; text: string }[]): Map<string, numb
 }
 
 /** Chat position, oldest first; the prompt order source. */
-function messagePositions(messages: { id: string; text: string }[]): Map<string, number> {
+function messagePositions(messages: RetrievalInput["messages"]): Map<string, number> {
     const positions = new Map<string, number>();
 
     for (let i = 0; i < messages.length; i += 1) {

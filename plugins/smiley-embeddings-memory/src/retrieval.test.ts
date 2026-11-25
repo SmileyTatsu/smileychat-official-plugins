@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ActiveModel, Embedder } from "./embedder";
 import { EmbeddingError } from "./embedder";
+import { hashText } from "./chunking";
 import type { ChatIndex, IndexModelInfo } from "./index-store";
 import { retrieveMemories } from "./retrieval";
 import { normalizeSettings } from "./settings";
@@ -11,9 +12,17 @@ function unit(...values: number[]): Float32Array {
     return normalize(new Float32Array(values));
 }
 
+/**
+ * Index fixture.
+ *
+ * `hashes` mirrors `index.messages`: the hash of the text that was embedded for
+ * each message, which is what lets retrieval spot an edit or a swipe change.
+ * Tests that do not care about staleness leave it empty.
+ */
 function makeIndex(
     chunks: { messageId: string; ord: number; text: string; vector: number[] }[],
     model: Partial<IndexModelInfo> = {},
+    hashes: Record<string, string> = {},
 ): ChatIndex {
     return {
         chatId: "chat-1",
@@ -25,9 +34,16 @@ function makeIndex(
             text: chunk.text,
             vector: unit(...chunk.vector),
         })),
-        messages: {},
+        messages: Object.fromEntries(
+            Object.entries(hashes).map(([id, hash]) => [id, { hash, chunks: 0 }]),
+        ),
         updatedAt: "2026-01-01T00:00:00.000Z",
     };
+}
+
+/** The `index.messages` hashes for a chat whose text was indexed as given. */
+function hashesOf(...messages: { id: string; text: string }[]): Record<string, string> {
+    return Object.fromEntries(messages.map((message) => [message.id, hashText(message.text)]));
 }
 
 function fakeEmbedder(
@@ -504,22 +520,168 @@ describe("retrieveMemories", () => {
         expect(state.queries[1].length).toBe(1500);
     });
 
-    test("marks memories of messages that left the chat with -1", async () => {
+    test("never injects a chunk whose message was deleted from the chat", async () => {
+        // The deleted message scores highest; the guard runs before ranking, so
+        // the weaker but still valid message takes the slot instead.
         const index = makeIndex([
-            { messageId: "gone", ord: 0, text: "deleted", vector: [1, 0, 0] },
-            { messageId: "m3", ord: 0, text: "present", vector: [0.9, 0.1, 0] },
+            { messageId: "deleted", ord: 0, text: "gone", vector: [1, 0, 0] },
+            { messageId: "m2", ord: 0, text: "kept", vector: [0.8, 0.6, 0] },
         ]);
         const { embedder } = fakeEmbedder([unit(1, 0, 0)]);
 
         const result = await retrieveMemories({
             index,
-            messages: messagesOf("one", "two", "three"),
+            messages: messagesOf("one", "two"),
             settings: settingsWith(),
             embedder,
             estimateTokens: charTokens,
         });
 
-        expect(result.memories.map((memory) => memory.messagesAgo)).toEqual([-1, 0]);
+        expect(result.memories.map((memory) => memory.messageId)).toEqual(["m2"]);
+        expect(result.candidates).toBe(1);
+        expect(result.skippedStale).toBe(1);
+        expect(result.skippedRecent).toBe(0);
+        expect(result.line).toBe(
+            `match: 1 memory (scores 0.80) -> ${result.tokens} tokens (1 stale chunk skipped)`,
+        );
+    });
+
+    test("never injects a message whose text was edited after indexing", async () => {
+        const before = { id: "m1", text: "alpha before the edit" };
+        const after = { id: "m1", text: "alpha after the edit" };
+        const index = makeIndex(
+            [
+                { messageId: "m1", ord: 0, text: "alpha before the edit", vector: [1, 0, 0] },
+                { messageId: "m2", ord: 0, text: "beta", vector: [0.9, 0.1, 0] },
+            ],
+            {},
+            hashesOf(before, { id: "m2", text: "beta" }),
+        );
+        const { embedder } = fakeEmbedder([unit(1, 0, 0)]);
+
+        const result = await retrieveMemories({
+            index,
+            messages: [after, { id: "m2", text: "beta" }],
+            settings: settingsWith(),
+            embedder,
+            estimateTokens: charTokens,
+        });
+
+        // The edited message's chunk still describes text the user replaced.
+        expect(result.memories.map((memory) => memory.messageId)).toEqual(["m2"]);
+        expect(result.skippedStale).toBe(1);
+    });
+
+    test("never injects the swipe the user moved away from", async () => {
+        const index = makeIndex(
+            [{ messageId: "m1", ord: 0, text: "first swipe", vector: [1, 0, 0] }],
+            {},
+            hashesOf({ id: "m1", text: "first swipe" }),
+        );
+        const { embedder } = fakeEmbedder([unit(1, 0, 0)]);
+
+        const result = await retrieveMemories({
+            index,
+            // Same id, and the visible swipe is now the second one.
+            messages: [{ id: "m1", text: "second swipe" }],
+            settings: settingsWith(),
+            embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(result.memories).toEqual([]);
+        expect(result.skippedStale).toBe(1);
+        expect(result.reason).toBe("all-in-recent-window");
+        expect(result.line).toBe("no match: no valid chunks (1 stale chunk skipped)");
+    });
+
+    test("stale chunks never take a top-K slot", async () => {
+        // topK 1: without the guard the stale chunk wins the only slot and the
+        // turn ends up with nothing.
+        const index = makeIndex([
+            { messageId: "deleted", ord: 0, text: "gone", vector: [1, 0, 0] },
+            { messageId: "m1", ord: 0, text: "kept", vector: [0.6, 0.8, 0] },
+        ]);
+
+        const result = await retrieveMemories({
+            index,
+            messages: messagesOf("one"),
+            settings: settingsWith({ topK: 1 }),
+            embedder: fakeEmbedder([unit(1, 0, 0)]).embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(result.memories.map((memory) => memory.text)).toEqual(["kept"]);
+        expect(result.skippedStale).toBe(1);
+    });
+
+    test("reports no valid chunks when every chunk is stale", async () => {
+        const index = makeIndex(
+            [
+                { messageId: "m1", ord: 0, text: "alpha", vector: [1, 0, 0] },
+                { messageId: "m1", ord: 1, text: "beta", vector: [0.9, 0.1, 0] },
+            ],
+            {},
+            hashesOf({ id: "m1", text: "completely different text" }),
+        );
+
+        const result = await retrieveMemories({
+            index,
+            messages: messagesOf("something else entirely"),
+            settings: settingsWith(),
+            embedder: fakeEmbedder([unit(1, 0, 0)]).embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(result.memories).toEqual([]);
+        expect(result.injectedText).toBe("");
+        expect(result.candidates).toBe(0);
+        expect(result.skippedStale).toBe(2);
+        // Same outcome code as "everything was filtered before ranking".
+        expect(result.reason).toBe("all-in-recent-window");
+        expect(result.line).toBe("no match: no valid chunks (2 stale chunks skipped)");
+    });
+
+    test("applies the same stale guard to a dry run", async () => {
+        const index = makeIndex([
+            { messageId: "deleted", ord: 0, text: "gone", vector: [1, 0, 0] },
+            { messageId: "m1", ord: 0, text: "kept", vector: [0.8, 0.6, 0] },
+        ]);
+
+        const result = await retrieveMemories({
+            index,
+            messages: messagesOf("one"),
+            settings: settingsWith(),
+            embedder: fakeEmbedder([unit(1, 0, 0)]).embedder,
+            estimateTokens: charTokens,
+            draft: "where was the key",
+        });
+
+        expect(result.memories.map((memory) => memory.text)).toEqual(["kept"]);
+        expect(result.skippedStale).toBe(1);
+    });
+
+    test("keeps a streaming turn's chunks while its text is still arriving", async () => {
+        const index = makeIndex(
+            [{ messageId: "m1", ord: 0, text: "complete answer", vector: [1, 0, 0] }],
+            {},
+            hashesOf({ id: "m1", text: "complete answer" }),
+        );
+
+        const result = await retrieveMemories({
+            index,
+            // Half-written text: hashing it would look like an edit.
+            messages: [{ id: "m1", text: "complete ans", streaming: true }],
+            settings: settingsWith(),
+            embedder: fakeEmbedder([unit(1, 0, 0)]).embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(result.memories.map((memory) => memory.text)).toEqual(["complete answer"]);
+        expect(result.skippedStale).toBe(0);
+        expect(result.line).toBe(
+            `match: 1 memory (scores 1.00) -> ${result.tokens} tokens`,
+        );
     });
 
     test("never throws when the embedder fails", async () => {

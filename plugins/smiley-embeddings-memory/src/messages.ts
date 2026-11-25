@@ -96,9 +96,22 @@ export function chatMessagesForIndex(messages: Message[], readers: MessageReader
     return out;
 }
 
-/** The shape `retrieveMemories` and the recent-window logic read. */
-export function retrievalMessages(messages: Message[], readers: MessageReaders = {}): { id: string; text: string }[] {
-    return chatMessagesForIndex(messages, readers).map((message) => ({ id: message.id, text: message.text }));
+/**
+ * The shape `retrieveMemories` and the recent-window logic read.
+ *
+ * `streaming` is carried through because retrieval must not treat a turn that is
+ * still generating as an edit: its text changes every token while the index
+ * holds the previous, complete version of the same message.
+ */
+export function retrievalMessages(
+    messages: Message[],
+    readers: MessageReaders = {},
+): { id: string; text: string; streaming?: boolean }[] {
+    return chatMessagesForIndex(messages, readers).map((message) =>
+        message.streaming
+            ? { id: message.id, text: message.text, streaming: true }
+            : { id: message.id, text: message.text },
+    );
 }
 
 /** How many trailing messages the scheduling fingerprint looks at. */
