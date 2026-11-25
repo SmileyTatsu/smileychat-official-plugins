@@ -3,15 +3,13 @@
 Status: **approved** (decisions of the review are folded in below: `smiley-` folder prefix, the Gemma profile is named `default`, CPU/GPU is a user choice).
 Plugin id: `smiley-embeddings-memory`. Folder: `plugins/smiley-embeddings-memory/` (the other four plugins drop the prefix in their folder name; this one keeps it by request).
 
-## Dependency on an unmerged SmileyChat branch
+## Dependency on the SmileyChat server-module runtime
 
-This plugin needs the server-module runtime (`serverMain`, `api.host`, `host.spawn`), which lives in SmileyChat's branch `feat/plugin-server-runtime` and is **not in SmileyChat `main` yet** (`main` is 0.0.5 and its typings have no `PluginHostApi`). Consequences:
+This plugin needs `serverMain`, `api.host` and `host.spawn`, which first ship in SmileyChat **0.0.6** (merged into SmileyChat `main` as `5f7be1c`, version bump `f0f5e10`; the typings in `types/` are identical to what `bun run update-types` fetches from `main`). Consequences:
 
-- `types/smileychat-plugin-api.d.ts` is a byte copy of that branch at commit `eb278f9`. `bun run update-types` defaults to `main` and would replace it with typings without `api.host`, breaking `typecheck`: until the branch is merged, refresh with `bun run update-types --ref feat/plugin-server-runtime` (or a commit), and go back to the default afterwards.
-- `minAppVersion` is `0.0.6`, the version the docs assign to server modules; the plugin reports as incompatible on 0.0.5 builds. It must not be tagged or listed in the registry before that SmileyChat release exists. Note that `release.yml` packs every plugin in `plugins/` on any `v*` tag, so a tag for another plugin would also attach this ZIP.
-- The end-to-end checks ran against a copy of that branch with only the copy's `package.json` version raised to 0.0.6.
-
-Semantic memory for long chats: embed the chat's messages in the background, and on every turn retrieve the most relevant *old* fragments and inject them into the prompt as "memories of past events".
+- `minAppVersion` is `0.0.6`: builds older than that report the plugin as incompatible and the Store disables Install.
+- `release.yml` packs every plugin in `plugins/` on any `v*` tag, so each tag attaches this ZIP too.
+- The end-to-end checks ran against the branch before it was merged, on a copy whose `package.json` version was raised to 0.0.6.
 
 ## 1. What was measured (Windows 11, RTX 5060 Ti 16 GB, llama.cpp `b12686`)
 
