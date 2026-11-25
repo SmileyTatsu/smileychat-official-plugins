@@ -64,6 +64,25 @@ export const DEFAULT_QWEN3_TASK =
     "Given a chat message, retrieve relevant past events from the same conversation";
 
 /**
+ * Cosine cut-offs per prefix profile, measured on the E2E chat (46 messages,
+ * 46 chunks, chunkText 400/40) with the two catalog models:
+ *
+ *   profile  model                  RELEVANT best    UNRELATED best
+ *   gemma    EmbeddingGemma-2 Q4    0.768 - 0.890    0.613 - 0.687  -> 0.73
+ *   qwen3    Qwen3-Embedding-4B     0.698 - 0.801    0.258 - 0.479  -> 0.59
+ *
+ * Each value is the midpoint of that gap (gemma 0.6875/0.768 = 0.7275 rounded
+ * up; qwen3 0.479/0.698 = 0.5885 rounded up). Gemma's cosines sit far higher
+ * even for unrelated text, which is why one shared 0.3 let nonsense through.
+ * `none` keeps the generic 0.3 of OpenAI-compatible endpoints: not calibrated.
+ */
+export const DEFAULT_THRESHOLDS: Record<PrefixProfile, number> = {
+    gemma: 0.73,
+    qwen3: 0.59,
+    none: 0.3,
+};
+
+/**
  * Query text for a profile. Qwen3 asks the instruction and the query to be separated
  * by a real newline with no space after `Query:`; Gemma uses its task prefix.
  *

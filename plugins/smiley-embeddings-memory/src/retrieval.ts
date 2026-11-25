@@ -11,7 +11,7 @@ import { EmbeddingError } from "./embedder";
 import { modelMatches } from "./index-store";
 import type { ChatIndex, IndexedChunk } from "./index-store";
 import type { PluginSettings } from "./settings";
-import { MEMORIES_PLACEHOLDER } from "./settings";
+import { effectiveThreshold, MEMORIES_PLACEHOLDER } from "./settings";
 import { rankVectors } from "./vectors";
 
 export type NoMatchReason =
@@ -60,7 +60,7 @@ export type RetrievalResult = {
     droppedByTokenCap: number;
     queries: string[];
     durationMs: number;
-    /** The log line, e.g. `match: 3 recuerdos (scores 0.71, 0.58, 0.44) -> 212 tokens`. */
+    /** The log line, e.g. `match: 3 memories (scores 0.71, 0.58, 0.44) -> 212 tokens`. */
     line: string;
 };
 
@@ -173,6 +173,9 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
     const { scores, skipped, best } = scoreChunks(queryVectors, index.chunks, (chunk) =>
         recent.has(index.chunks[chunk].messageId),
     );
+    // The embedder knows which prefix profile (and therefore which model family)
+    // is answering, which is what decides the sensible cut-off.
+    const threshold = effectiveThreshold(settings, embedder.model.prefixProfile);
 
     working.skippedRecent = skipped;
     working.candidates = scores.size;
@@ -184,7 +187,8 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
     }
 
     const above = [...scores.entries()]
-        .filter(([, score]) => score >= settings.threshold)
+        // Model-aware: the profile's calibrated cut-off when the user left it on auto.
+        .filter(([, score]) => score >= threshold)
         .sort((a, b) => b[1] - a[1]);
 
     working.belowThreshold = scores.size - above.length;
@@ -197,7 +201,7 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
         return finish(
             `no match: all below threshold (best ${bestText})`,
             "below-threshold",
-            `best score ${bestText} is below ${settings.threshold}`,
+            `best score ${bestText} is below ${threshold}`,
         );
     }
 
@@ -240,8 +244,9 @@ export async function retrieveMemories(input: RetrievalInput): Promise<Retrieval
         .sort((a, b) => b - a)
         .map(formatScore)
         .join(", ");
+    const count = kept.length === 1 ? "1 memory" : `${kept.length} memories`;
 
-    return finish(`match: ${kept.length} recuerdos (scores ${scoresText}) -> ${tokens} tokens`);
+    return finish(`match: ${count} (scores ${scoresText}) -> ${tokens} tokens`);
 }
 
 /** Last `count` non-empty texts, oldest first so the batched request is stable. */

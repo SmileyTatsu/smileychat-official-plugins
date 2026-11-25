@@ -19,7 +19,7 @@ function resultWith(memories: number, injectedText = "M\n- one"): RetrievalResul
         })),
         injectedText,
         tokens: 12,
-        line: "match: 1 recuerdos (scores 0.90) -> 12 tokens",
+        line: "match: 1 memory (scores 0.90) -> 12 tokens",
     };
 }
 

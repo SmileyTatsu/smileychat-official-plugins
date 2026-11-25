@@ -4,6 +4,7 @@ import {
     activeModelOf,
     DEFAULT_SETTINGS,
     DEFAULT_TEMPLATE,
+    effectiveThreshold,
     normalizeSettings,
     serverConfigOf,
     SETTINGS_KEY,
@@ -159,6 +160,24 @@ describe("normalizeSettings", () => {
         expect(normalizeSettings({ setupComplete: "1" }).setupComplete).toBe(false);
     });
 
+    test("tracks the download notice separately from the API notice", () => {
+        expect(DEFAULT_SETTINGS.downloadNoticeAccepted).toBe(false);
+        expect(normalizeSettings({}).downloadNoticeAccepted).toBe(false);
+        expect(normalizeSettings({ downloadNoticeAccepted: true }).downloadNoticeAccepted).toBe(true);
+        expect(normalizeSettings({ downloadNoticeAccepted: "yes" }).downloadNoticeAccepted).toBe(false);
+    });
+
+    test("keeps an explicit threshold, clamps it, and stores auto as null", () => {
+        expect(DEFAULT_SETTINGS.threshold).toBeNull();
+        expect(normalizeSettings({}).threshold).toBeNull();
+        expect(normalizeSettings({ threshold: null }).threshold).toBeNull();
+        expect(normalizeSettings({ threshold: 0.42 }).threshold).toBe(0.42);
+        expect(normalizeSettings({ threshold: -1 }).threshold).toBe(0);
+        expect(normalizeSettings({ threshold: 5 }).threshold).toBe(1);
+        // A string is not a threshold; auto is safer than 0, which injects everything.
+        expect(normalizeSettings({ threshold: "0.5" }).threshold).toBeNull();
+    });
+
     test("round-trips the defaults", () => {
         expect(normalizeSettings(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS);
     });
@@ -204,12 +223,42 @@ describe("serverConfigOf", () => {
     });
 
     test("never sends the browser-only settings to the server", () => {
-        const config = serverConfigOf(normalizeSettings({ setupComplete: true }));
+        const config = serverConfigOf(
+            normalizeSettings({ setupComplete: true, downloadNoticeAccepted: true }),
+        );
 
         // The module has no use for them and its validator rejects unknown keys.
         expect(config).not.toHaveProperty("setupComplete");
+        expect(config).not.toHaveProperty("downloadNoticeAccepted");
+        expect(config).not.toHaveProperty("threshold");
         expect(config).not.toHaveProperty("enabled");
         expect(config).not.toHaveProperty("api");
+    });
+});
+
+describe("effectiveThreshold", () => {
+    test("uses the calibrated default of the model's prefix profile when auto", () => {
+        const auto = normalizeSettings({});
+
+        expect(effectiveThreshold(auto, "gemma")).toBe(0.73);
+        expect(effectiveThreshold(auto, "qwen3")).toBe(0.59);
+        expect(effectiveThreshold(auto, "none")).toBe(0.3);
+    });
+
+    test("an explicit number overrides every profile", () => {
+        const explicit = normalizeSettings({ threshold: 0.45 });
+
+        expect(effectiveThreshold(explicit, "gemma")).toBe(0.45);
+        expect(effectiveThreshold(explicit, "qwen3")).toBe(0.45);
+        expect(effectiveThreshold(explicit, "none")).toBe(0.45);
+    });
+
+    test("clamps values that bypassed normalization", () => {
+        const high = { ...DEFAULT_SETTINGS, threshold: 1.5 };
+        const broken = { ...DEFAULT_SETTINGS, threshold: Number.NaN };
+
+        expect(effectiveThreshold(high, "qwen3")).toBe(1);
+        expect(effectiveThreshold(broken, "qwen3")).toBe(0.59);
     });
 });
 

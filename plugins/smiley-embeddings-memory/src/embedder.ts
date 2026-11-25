@@ -440,10 +440,12 @@ async function localErrorFor(response: Response): Promise<EmbeddingError> {
     const detail = error && typeof error.message === "string" ? error.message : "";
 
     if (code === "not-installed") {
+        // The module knows exactly what is missing (binary, build, model file), so
+        // its own message is the actionable one; a generic sentence would hide it.
         return new EmbeddingError(
             "not-installed",
-            "The local embedding model is not installed yet.",
-            "Open the plugin settings and press Install.",
+            detail || "Nothing needed for local embeddings is installed yet.",
+            "Open Semantic Memory settings and press Install and test.",
         );
     }
 

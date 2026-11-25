@@ -102,7 +102,7 @@ describe("retrieveMemories", () => {
         expect(result.belowThreshold).toBe(0);
         expect(result.droppedByTokenCap).toBe(0);
         expect(result.queries).toEqual(["five"]);
-        expect(result.line).toBe(`match: 3 recuerdos (scores 1.00, 0.80, 0.60) -> ${result.injectedText.length} tokens`);
+        expect(result.line).toBe(`match: 3 memories (scores 1.00, 0.80, 0.60) -> ${result.injectedText.length} tokens`);
     });
 
     test("keeps only the top K scores", async () => {
@@ -188,6 +188,59 @@ describe("retrieveMemories", () => {
         expect(result.injectedText).toBe("");
         expect(result.belowThreshold).toBe(2);
         expect(result.line).toBe("no match: all below threshold (best 0.20)");
+    });
+
+    test("uses the model profile's calibrated threshold when the setting is auto", async () => {
+        // 0.65 sits between Qwen3's 0.59 cut-off and Gemma's 0.73: unrelated text
+        // scores that high for Gemma, so only one of the two may inject it.
+        const index = makeIndex([{ messageId: "m1", ord: 0, text: "alpha", vector: [0.65, 0.759934, 0] }]);
+        const query = unit(1, 0, 0);
+
+        const qwen = await retrieveMemories({
+            index,
+            messages: messagesOf("one", "two"),
+            settings: settingsWith({ threshold: null }),
+            embedder: fakeEmbedder([query], { model: { prefixProfile: "qwen3" } }).embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(qwen.memories.length).toBe(1);
+
+        const gemma = await retrieveMemories({
+            index,
+            messages: messagesOf("one", "two"),
+            settings: settingsWith({ threshold: null }),
+            embedder: fakeEmbedder([query], { model: { prefixProfile: "gemma" } }).embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(gemma.reason).toBe("below-threshold");
+        expect(gemma.detail).toContain("below 0.73");
+    });
+
+    test("an explicit threshold overrides the model's default", async () => {
+        const index = makeIndex([{ messageId: "m1", ord: 0, text: "alpha", vector: [0.65, 0.759934, 0] }]);
+        const query = unit(1, 0, 0);
+
+        const strict = await retrieveMemories({
+            index,
+            messages: messagesOf("one", "two"),
+            settings: settingsWith({ threshold: 0.9 }),
+            embedder: fakeEmbedder([query], { model: { prefixProfile: "qwen3" } }).embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(strict.reason).toBe("below-threshold");
+
+        const loose = await retrieveMemories({
+            index,
+            messages: messagesOf("one", "two"),
+            settings: settingsWith({ threshold: 0.1 }),
+            embedder: fakeEmbedder([query], { model: { prefixProfile: "gemma" } }).embedder,
+            estimateTokens: charTokens,
+        });
+
+        expect(loose.memories.length).toBe(1);
     });
 
     test("merges adjacent chunks of one message and keeps distant ones apart", async () => {

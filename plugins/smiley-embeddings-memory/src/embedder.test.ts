@@ -382,15 +382,28 @@ describe("embedder (local source)", () => {
         expect(calls[0].body.texts[0]).toBe("task: search result | query: q");
     });
 
-    test("maps not-installed and points at Install", async () => {
+    test("maps not-installed to the server's own message and points at Install", async () => {
+        const serverMessage =
+            "No llama.cpp build installed for cpu. Open the setup and press Install.";
         const { embedder } = localHarness({
-            respond: () => localErrorResponse("not-installed", "no model file", 409),
+            respond: () => localErrorResponse("not-installed", serverMessage, 409),
         });
 
         const error = await rejection(embedder.embedDocuments(["x"]));
 
         expect(error.code).toBe("not-installed");
-        expect(error.hint).toContain("Install");
+        // The module knows what is missing; its message must reach the user.
+        expect(error.message).toBe(serverMessage);
+        expect(error.hint).toBe("Open Semantic Memory settings and press Install and test.");
+    });
+
+    test("keeps a usable message when not-installed arrives without one", async () => {
+        const { embedder } = localHarness({ respond: () => localErrorResponse("not-installed", "") });
+
+        const error = await rejection(embedder.embedDocuments(["x"]));
+
+        expect(error.code).toBe("not-installed");
+        expect(error.message).toContain("installed yet");
     });
 
     test("maps starting-failed to not-ready and keeps the server message", async () => {

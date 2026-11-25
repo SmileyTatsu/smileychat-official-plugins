@@ -10,7 +10,7 @@
 
 import type { DeviceChoice, GpuBackendChoice, ModelProfileChoice } from "./server/types";
 import type { ActiveModel } from "./embedder";
-import { DEFAULT_PROFILE, DEFAULT_QWEN3_TASK, LOCAL_MODELS } from "./models";
+import { DEFAULT_PROFILE, DEFAULT_QWEN3_TASK, DEFAULT_THRESHOLDS, LOCAL_MODELS } from "./models";
 import type { PrefixProfile } from "./models";
 
 export type EmbeddingSource = "local" | "api";
@@ -46,8 +46,9 @@ export type PluginSettings = {
     chunkOverlap: number;
     queryMessages: number;
     topK: number;
-    threshold: number;
     retain: number;
+    /** null = auto: the active model profile's calibrated default. */
+    threshold: number | null;
     depth: number;
     template: string;
     maxMemoryTokens: number;
@@ -55,6 +56,8 @@ export type PluginSettings = {
     autoIndexBacklog: boolean;
     /** Set once the user has seen "your messages will be sent to {host}". */
     apiNoticeAccepted: boolean;
+    /** Set once the user has seen that local mode downloads programs and models. */
+    downloadNoticeAccepted: boolean;
     /** First successful test; keeps the wizard collapsed after a reload. */
     setupComplete: boolean;
 };
@@ -100,7 +103,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     chunkOverlap: 40,
     queryMessages: 2,
     topK: 3,
-    threshold: 0.3,
+    threshold: null,
     retain: 5,
     depth: 2,
     template: DEFAULT_TEMPLATE,
@@ -108,6 +111,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     timeoutMs: 8000,
     autoIndexBacklog: true,
     apiNoticeAccepted: false,
+    downloadNoticeAccepted: false,
     setupComplete: false,
 };
 
@@ -160,7 +164,7 @@ export function normalizeSettings(raw: unknown): PluginSettings {
         queryMessages: integerValue(source.queryMessages, 1, 10, DEFAULT_SETTINGS.queryMessages),
         topK: integerValue(source.topK, 1, 20, DEFAULT_SETTINGS.topK),
         // A threshold is a cosine, so the only meaningful range is 0..1.
-        threshold: numberValue(source.threshold, 0, 1, DEFAULT_SETTINGS.threshold),
+        threshold: thresholdValue(source.threshold),
         retain: integerValue(source.retain, 0, 50, DEFAULT_SETTINGS.retain),
         depth: integerValue(source.depth, 0, 50, DEFAULT_SETTINGS.depth),
         template: templateValue(source.template),
@@ -168,6 +172,10 @@ export function normalizeSettings(raw: unknown): PluginSettings {
         timeoutMs: integerValue(source.timeoutMs, 1000, 60000, DEFAULT_SETTINGS.timeoutMs),
         autoIndexBacklog: booleanValue(source.autoIndexBacklog, DEFAULT_SETTINGS.autoIndexBacklog),
         apiNoticeAccepted: booleanValue(source.apiNoticeAccepted, DEFAULT_SETTINGS.apiNoticeAccepted),
+        downloadNoticeAccepted: booleanValue(
+            source.downloadNoticeAccepted,
+            DEFAULT_SETTINGS.downloadNoticeAccepted,
+        ),
         setupComplete: booleanValue(source.setupComplete, DEFAULT_SETTINGS.setupComplete),
     };
 }
@@ -200,6 +208,22 @@ export function serverConfigOf(s: PluginSettings): Record<string, unknown> {
     }
 
     return config;
+}
+
+/**
+ * The cosine cut-off retrieval should use.
+ *
+ * Model-aware on purpose: EmbeddingGemma scores unrelated text around 0.61-0.69
+ * while Qwen3-4B scores it at 0.26-0.48, so a single 0.3 either injects nonsense
+ * (gemma) or drops real memories (qwen3). A stored number always wins; `null`
+ * means "auto" and picks the profile's calibrated default.
+ */
+export function effectiveThreshold(s: PluginSettings, prefixProfile: PrefixProfile): number {
+    const fallback = DEFAULT_THRESHOLDS[prefixProfile] ?? DEFAULT_THRESHOLDS.none;
+    const value = s.threshold ?? fallback;
+
+    // Clamped again here so a hand-built settings object cannot pass 1.5 through.
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
 }
 
 /**
@@ -309,14 +333,14 @@ function integerValue(value: unknown, minimum: number, maximum: number, fallback
     return Math.min(maximum, Math.max(minimum, Math.round(number)));
 }
 
-function numberValue(value: unknown, minimum: number, maximum: number, fallback: number): number {
-    const number = Number(value);
-
-    if (!Number.isFinite(number)) {
-        return fallback;
+/** `null` means auto: the profile's calibrated default is used at retrieval time. */
+function thresholdValue(value: unknown): number | null {
+    // A string or a missing value is "auto", not 0: 0 would inject everything.
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return null;
     }
 
-    return Math.min(maximum, Math.max(minimum, number));
+    return Math.min(1, Math.max(0, value));
 }
 
 function booleanValue(value: unknown, fallback: boolean): boolean {
