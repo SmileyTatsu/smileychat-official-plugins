@@ -3,7 +3,7 @@ import type { PluginManifest } from "../types/smileychat-plugin-api";
 export const embeddingsMemoryManifest: PluginManifest = {
     id: "smiley-embeddings-memory",
     name: "Smiley Embeddings Memory",
-    version: "0.1.0",
+    version: "0.1.1",
     description:
         "Long-chat memory by semantic search: indexes your messages and injects the most relevant old fragments into the prompt. Setup contacts third parties: it downloads the llama.cpp program from GitHub and an embedding model from Hugging Face, then runs that program on your computer (listening on 127.0.0.1 only). With the local source your chat text never leaves your device; with an API source your chat text is sent to the endpoint you configure.",
     main: "dist/index.js",
