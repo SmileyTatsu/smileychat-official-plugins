@@ -5,7 +5,7 @@
 // fake host.spawn. The installer is the real one, driven by files seeded on disk, so no test here
 // touches the network.
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { MAX_BATCH_TEXTS } from "./llama-process";
+import { LlamaProcess, MAX_BATCH_TEXTS } from "./llama-process";
 import { activate } from "./main";
 import type { PluginServerHost, PluginServerInstance } from "./types";
 
@@ -324,6 +324,29 @@ describe("POST /config", () => {
         const status = await read(await request(app, "GET", "/status"));
 
         expect(status.config.ctx).toBe(2048);
+    });
+
+    test("pushes the saved idle minutes into the running server", async () => {
+        const app = await makeApp();
+        await request(app, "POST", "/start");
+
+        const pid = app.host.spawns[0].pid;
+        // Saving 1 minute in the settings panel must reach the manager that is already up; no
+        // /embed follows, so anything that waits for the next request would keep the old window.
+        const apply = spyOn(LlamaProcess.prototype, "setIdleMinutes");
+
+        try {
+            const response = await request(app, "POST", "/config", { idleMinutes: 1 });
+            const saved = await read<{ idleMinutes: number }>(response);
+
+            expect(response.status).toBe(200);
+            expect(saved.idleMinutes).toBe(1);
+            expect(apply).toHaveBeenCalledWith(1);
+            // The new window is a real one: one minute does not stop the server on the spot.
+            expect(isAlive(pid)).toBe(true);
+        } finally {
+            apply.mockRestore();
+        }
     });
 
     test("rejects a config config.ts does not accept without writing anything", async () => {

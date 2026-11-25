@@ -297,9 +297,13 @@ export async function activate(host: PluginServerHost): Promise<PluginServerInst
                     throw error;
                 }
 
-                // Saving starts and stops nothing: the next /start or /embed compares the launch
+                // Saving starts and stops nothing — the next /start or /embed compares the launch
                 // spec it resolves from the new config with the running one and restarts only when
-                // it actually differs.
+                // it actually differs. The idle window is the exception: it is pushed in now,
+                // because the user may switch 10 minutes to 1 and no request is guaranteed to
+                // arrive before the old timer would have stopped the server.
+                llamaProcess.setIdleMinutes(saved.idleMinutes);
+
                 host.logger.debug("config saved", { ctx: saved.ctx, device: saved.device, profile: saved.profile });
 
                 return Response.json(saved);

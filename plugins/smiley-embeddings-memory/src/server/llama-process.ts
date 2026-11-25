@@ -262,7 +262,9 @@ export class LlamaProcess {
         }
 
         this.requestedDevice = requestedDevice;
-        this.configureIdle(idleMinutes);
+        // Re-armed with the value of this call, so a request that arrives after a settings change
+        // applies the new window even if POST /config was never seen.
+        this.setIdleMinutes(idleMinutes);
 
         if (this.starting !== undefined) {
             await this.starting;
@@ -302,6 +304,10 @@ export class LlamaProcess {
         }
 
         if (texts.length === 0) {
+            // An empty batch is still activity: re-arm before answering so a caller that sends
+            // nothing does not get the server stopped under it.
+            this.touch();
+
             return [];
         }
 
@@ -430,18 +436,17 @@ export class LlamaProcess {
         await this.stop();
     }
 
-    private configureIdle(idleMinutes: number): void {
-        const ms = idleMinutes > 0 ? Math.max(1, idleMinutes * 60_000) : 0;
-
-        if (ms === this.idleMs) {
-            return;
-        }
-
-        this.idleMs = ms;
-
-        if (this.state === "ready") {
-            this.startIdleTimer();
-        }
+    /**
+     * Applies idle minutes the user just saved, on a running server or for a later start.
+     *
+     * `ensureReady` can only carry the value of a request that is actually happening, and after the
+     * settings panel saves, no request is guaranteed before the old window expires (E2E: switching
+     * 10 minutes to 1 kept the server up for the old 10-minute window). POST /config therefore
+     * pushes the value in here, and the countdown is replaced from now. 0 = never stop.
+     */
+    setIdleMinutes(minutes: number): void {
+        this.idleMs = minutes > 0 ? Math.max(1, minutes * 60_000) : 0;
+        this.startIdleTimer();
     }
 
     private startIdleTimer(): void {
@@ -475,6 +480,8 @@ export class LlamaProcess {
 
     private touch(): void {
         this.lastUsedAt = new Date(this.deps.now()).toISOString();
+        // Every ensureReady/embed refreshes the countdown with the currently stored minutes, so a
+        // settings change applies from this call onwards and not only after a restart.
         this.startIdleTimer();
     }
 

@@ -307,6 +307,109 @@ describe("LlamaProcess", () => {
         expect(isAlive(pid)).toBe(true);
     });
 
+    test("re-arms the idle timer when the idle minutes change on a running server", async () => {
+        const host = makeHost();
+        const manager = makeProcess(host);
+
+        // Ten minutes first: nothing should stop on its own while the test runs.
+        await manager.ensureReady([spec()], "auto", 10);
+        const pid = manager.status().pid as number;
+
+        // The settings panel changed 10 -> 0.002 (120 ms) and the next message arrives through
+        // ensureReady with the same launch spec: the old timer must be replaced, not kept.
+        const changed = Date.now();
+        await manager.ensureReady([spec()], "auto", 0.002);
+        await waitFor(() => manager.status().state === "stopped", 3000);
+
+        expect(Date.now() - changed).toBeLessThan(2500);
+        expect(host.logs.some((line) => line === "idle: stopped llama-server")).toBe(true);
+        expect(isAlive(pid)).toBe(false);
+    });
+
+    test("disarms the idle timer when idleMinutes becomes 0", async () => {
+        const host = makeHost();
+        const manager = makeProcess(host);
+
+        await manager.ensureReady([spec()], "auto", 0.002);
+        await manager.ensureReady([spec()], "auto", 0);
+
+        // Well past the 120 ms timer that was armed by the first call.
+        await Bun.sleep(400);
+
+        expect(manager.status().state).toBe("ready");
+        expect(host.logs.some((line) => line === "idle: stopped llama-server")).toBe(false);
+    });
+
+    test("arms the idle timer when idleMinutes goes from 0 to a value", async () => {
+        const host = makeHost();
+        const manager = makeProcess(host);
+
+        await manager.ensureReady([spec()], "auto", 0);
+        await manager.ensureReady([spec()], "auto", 0.002);
+
+        await waitFor(() => manager.status().state === "stopped", 3000);
+
+        expect(host.logs.some((line) => line === "idle: stopped llama-server")).toBe(true);
+    });
+
+    test("restarts the countdown on every call, even with unchanged idle minutes", async () => {
+        const host = makeHost();
+        const manager = makeProcess(host);
+
+        await manager.ensureReady([spec()], "auto", 0.02);
+        await Bun.sleep(700);
+        // Same value, but this call must move the deadline: without a re-arm the 1200 ms armed by
+        // the first call would already be 700 ms old here.
+        await manager.ensureReady([spec()], "auto", 0.02);
+        await Bun.sleep(600);
+
+        expect(manager.status().state).toBe("ready");
+        await waitFor(() => manager.status().state === "stopped", 3000);
+    });
+
+    test("setIdleMinutes stops a running server even when nothing else calls it", async () => {
+        const host = makeHost();
+        const manager = makeProcess(host);
+
+        // The settings panel was saved with 10 minutes and the server is up with that window armed.
+        await manager.ensureReady([spec()], "auto", 10);
+        const pid = manager.status().pid as number;
+
+        // POST /config is the only call that happens; no /embed follows.
+        const changed = Date.now();
+        manager.setIdleMinutes(0.002);
+        await waitFor(() => manager.status().state === "stopped", 3000);
+
+        expect(Date.now() - changed).toBeLessThan(2500);
+        expect(host.logs.some((line) => line === "idle: stopped llama-server")).toBe(true);
+        expect(isAlive(pid)).toBe(false);
+    });
+
+    test("setIdleMinutes(0) keeps a running server up", async () => {
+        const host = makeHost();
+        const manager = makeProcess(host);
+
+        await manager.ensureReady([spec()], "auto", 0.002);
+        manager.setIdleMinutes(0);
+
+        await Bun.sleep(400);
+
+        expect(manager.status().state).toBe("ready");
+        expect(host.logs.some((line) => line === "idle: stopped llama-server")).toBe(false);
+    });
+
+    test("setIdleMinutes on a stopped manager only stores the window", async () => {
+        const host = makeHost();
+        const manager = makeProcess(host);
+
+        manager.setIdleMinutes(0.002);
+
+        await Bun.sleep(200);
+
+        expect(manager.status().state).toBe("stopped");
+        expect(host.spawns).toHaveLength(0);
+    });
+
     test("marks an unexpected exit as an error and starts again on the next call", async () => {
         const behaviors: Behaviors = { cuda: { FAKE_EXIT_AFTER_MS: "150" } };
         const host = makeHost(behaviors);
