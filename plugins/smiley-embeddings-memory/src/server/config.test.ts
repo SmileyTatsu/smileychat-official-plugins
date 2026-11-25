@@ -207,6 +207,52 @@ describe("path validation", () => {
         expect(await loadConfig(dir)).toEqual(cleared);
     });
 
+    test("a cleared path disappears from the file instead of lingering", async () => {
+        await saveConfig(dir, { binaryPath: absolute("llama-server.exe"), modelPath: absolute("m.gguf") });
+
+        // The exact repro: the field was set, then emptied; the file must not keep the old path.
+        await saveConfig(dir, { binaryPath: "" });
+
+        const afterClear = (await readConfigFile()) as Record<string, unknown>;
+
+        expect(afterClear).not.toHaveProperty("binaryPath");
+        // Only the field that was cleared goes away.
+        expect(afterClear.modelPath).toBe(absolute("m.gguf"));
+
+        await saveConfig(dir, { binaryPath: absolute("llama-server.exe"), modelPath: null });
+
+        const afterReset = (await readConfigFile()) as Record<string, unknown>;
+
+        expect(afterReset.binaryPath).toBe(absolute("llama-server.exe"));
+        expect(afterReset).not.toHaveProperty("modelPath");
+        // Reloading must not bring either key back.
+        expect((await loadConfig(dir)).modelPath).toBeUndefined();
+        expect((await loadConfig(dir)).binaryPath).toBe(absolute("llama-server.exe"));
+    });
+
+    test("an absent key keeps the stored path", async () => {
+        const binaryPath = absolute("llama-server.exe");
+
+        await saveConfig(dir, { binaryPath, modelPath: absolute("m.gguf") });
+        // A partial save from another tab (device change) must not wipe the manual paths.
+        await saveConfig(dir, { device: "cpu" });
+
+        const reloaded = await loadConfig(dir);
+
+        expect(reloaded.binaryPath).toBe(binaryPath);
+        expect(reloaded.modelPath).toBe(absolute("m.gguf"));
+    });
+
+    test("load does not resurrect an empty path from a hand-edited file", async () => {
+        await writeConfigFile({ ...DEFAULT_SERVER_CONFIG, binaryPath: "", modelPath: "   " });
+
+        const loaded = await loadConfig(dir);
+
+        expect(loaded.binaryPath).toBeUndefined();
+        expect(loaded.modelPath).toBeUndefined();
+        expect(JSON.stringify(loaded)).not.toContain("binaryPath");
+    });
+
     test("accepts an absolute .gguf model path and nothing else", async () => {
         expect((await saveConfig(dir, { modelPath: absolute("model.Q4_K_M.gguf") })).modelPath).toBe(
             absolute("model.Q4_K_M.gguf"),

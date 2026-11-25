@@ -312,18 +312,37 @@ export async function loadConfig(dataDir: string): Promise<ServerConfig> {
     return config;
 }
 
-/** Merge `patch` over the saved config, validate, and write it atomically. Nothing is written when invalid. */
+/** Keys where an explicit `""`/`null` in a patch means "clear the stored value", not "store empty". */
+const CLEARABLE_KEYS = new Set(["binaryPath", "modelPath"]);
+
+/**
+ * Merge `patch` over the saved config, validate, and write it atomically. Nothing is written when invalid.
+ *
+ * The three cases are deliberately different, because the UI sends the whole form:
+ *   * key absent  -> the stored value stays (a partial save from another tab must not wipe it);
+ *   * `""`/`null` on a path key -> the key is DELETED, which is how "clear the Binary path field"
+ *     reaches the file;
+ *   * any other value -> validated as usual (an empty `releaseTag` is an error, not a clear).
+ */
 export async function saveConfig(dataDir: string, patch: unknown): Promise<ServerConfig> {
     const record = asRecord(patch, "config");
     const current = await loadConfig(dataDir);
     const merged: Record<string, unknown> = { ...current };
 
     for (const [key, value] of Object.entries(record)) {
-        // JSON has no `undefined`; ignoring it keeps "missing key" and "explicit clear" (null or
-        // an empty string) distinct.
-        if (value !== undefined) {
-            merged[key] = value;
+        if (value === undefined) {
+            continue;
         }
+
+        if (CLEARABLE_KEYS.has(key) && (value === null || value === "")) {
+            // Deleting here (instead of storing "") is what makes the cleared state survive: the
+            // validator would drop the key anyway, but only after `merged` had been built, and a
+            // future default could quietly bring the old path back.
+            delete merged[key];
+            continue;
+        }
+
+        merged[key] = value;
     }
 
     const { config, problems } = validate(merged);

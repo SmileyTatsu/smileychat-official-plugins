@@ -326,6 +326,36 @@ describe("POST /config", () => {
         expect(status.config.ctx).toBe(2048);
     });
 
+    test("an empty path clears it from the file and from /status", async () => {
+        const app = await makeApp({ install: "none" });
+        const missing = join(app.host.dataDir, "nope", "llama-server.exe");
+
+        const set = await request(app, "POST", "/config", { binaryPath: missing, modelPath: app.modelPath });
+        const setBody = await read(set);
+
+        expect(set.status).toBe(200);
+        expect(setBody).toMatchObject({ binaryPath: missing });
+
+        // The UI clearing the field sends ""; the server has to delete the key, not keep it.
+        const cleared = await request(app, "POST", "/config", { binaryPath: "", modelPath: "" });
+        const clearedBody = await read(cleared);
+
+        expect(cleared.status).toBe(200);
+        expect(clearedBody.binaryPath).toBeUndefined();
+        expect(clearedBody.modelPath).toBeUndefined();
+
+        const stored = JSON.parse(await readFile(join(app.host.dataDir, "config.json"), "utf8"));
+
+        expect(stored).not.toHaveProperty("binaryPath");
+        expect(stored).not.toHaveProperty("modelPath");
+
+        // And the next launch uses the disk, not the path that was just removed.
+        const status = await read(await request(app, "GET", "/status"));
+
+        expect(status.config.binaryPath).toBeUndefined();
+        expect(status.installer.binary.backend).not.toBe("manual");
+    });
+
     test("pushes the saved idle minutes into the running server", async () => {
         const app = await makeApp();
         await request(app, "POST", "/start");

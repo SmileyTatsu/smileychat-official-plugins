@@ -181,9 +181,11 @@ export function normalizeSettings(raw: unknown): PluginSettings {
 }
 
 /**
- * The subset `POST /config` accepts. Paths are omitted (not sent empty) because
- * the server treats a present path as "use this file" and its validator rejects
- * an empty string.
+ * The subset `POST /config` accepts.
+ *
+ * The two path fields are always sent, as `""` when empty: the server reads an explicit empty
+ * string as "clear this key". Omitting them (as this function used to) made clearing the Binary
+ * path field a no-op — config.json kept the old path and every later Test failed on it.
  */
 export function serverConfigOf(s: PluginSettings): Record<string, unknown> {
     const config: Record<string, unknown> = {
@@ -193,6 +195,8 @@ export function serverConfigOf(s: PluginSettings): Record<string, unknown> {
         device: s.device,
         gpuBackend: s.gpuBackend,
         releaseTag: s.releaseTag,
+        binaryPath: s.binaryPath.trim(),
+        modelPath: s.modelPath.trim(),
     };
 
     if (s.profile === "custom") {

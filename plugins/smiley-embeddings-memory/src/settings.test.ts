@@ -196,6 +196,8 @@ describe("serverConfigOf", () => {
             device: "cpu",
             gpuBackend: "vulkan",
             releaseTag: "b12686",
+            binaryPath: "",
+            modelPath: "",
         });
     });
 
@@ -210,16 +212,23 @@ describe("serverConfigOf", () => {
         expect(config.customModel).toEqual({ repo: "org/model-GGUF", file: "m.gguf", pooling: "last" });
     });
 
-    test("omits manual paths when they are empty and sends them when set", () => {
-        expect(serverConfigOf(DEFAULT_SETTINGS)).not.toHaveProperty("binaryPath");
-        expect(serverConfigOf(DEFAULT_SETTINGS)).not.toHaveProperty("modelPath");
+    test("always sends both path fields, empty when unset, so clearing one reaches the server", () => {
+        // Omitting an empty path would keep the value config.json already has: clearing the
+        // field in the UI has to be an explicit "".
+        expect(serverConfigOf(DEFAULT_SETTINGS)).toMatchObject({ binaryPath: "", modelPath: "" });
 
         const config = serverConfigOf(
-            normalizeSettings({ binaryPath: "C:/bin/llama-server.exe", modelPath: "C:/models/a.gguf" }),
+            normalizeSettings({ binaryPath: "  C:/bin/llama-server.exe  ", modelPath: "C:/models/a.gguf" }),
         );
 
         expect(config.binaryPath).toBe("C:/bin/llama-server.exe");
         expect(config.modelPath).toBe("C:/models/a.gguf");
+    });
+
+    test("a path that is only whitespace counts as cleared", () => {
+        expect(
+            serverConfigOf(normalizeSettings({ binaryPath: "   ", modelPath: "	" })),
+        ).toMatchObject({ binaryPath: "", modelPath: "" });
     });
 
     test("never sends the browser-only settings to the server", () => {
