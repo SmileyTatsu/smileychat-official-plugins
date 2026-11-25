@@ -124,7 +124,7 @@ function pickCudaBuild(
     release: Release,
     osPrefix: "win" | "ubuntu",
     arch: Platform["arch"],
-    major: number,
+    major: number | undefined,
 ): CudaPick | undefined {
     const pattern = assetPattern(release.tag, `${osPrefix}-cuda-(\\d+(?:\\.\\d+)*)`, arch);
     let best: CudaPick | undefined;
@@ -138,7 +138,9 @@ function pickCudaBuild(
 
         const version = match[1];
 
-        if (Number.parseInt(version.split(".")[0], 10) !== major) {
+        // `undefined` means the driver's CUDA version could not be read, so every build is a
+        // candidate and the newest one wins.
+        if (major !== undefined && Number.parseInt(version.split(".")[0], 10) !== major) {
             continue;
         }
 
@@ -184,7 +186,7 @@ function cudaPlan(
     release: Release,
     osPrefix: "win" | "ubuntu",
     arch: Platform["arch"],
-    major: number,
+    major: number | undefined,
 ): BinaryPlan | undefined {
     const cuda = pickCudaBuild(release, osPrefix, arch, major);
 
@@ -203,10 +205,17 @@ function cudaPlan(
 }
 
 // Which CUDA majors to try, in order. A 12.x driver cannot run a 13.x build, but a 13.x driver
-// can still run a 12.x one, so a missing 13 build in a release is not a dead end.
-function cudaMajorsFor(platform: Platform, gpu: GpuInfo): number[] {
-    if (!gpu.nvidia || gpu.cudaMajor === undefined) {
+// can still run a 12.x one, so a missing 13 build in a release is not a dead end. `undefined`
+// (nvidia-smi did not report a CUDA version) means "take the newest build the release ships":
+// newer drivers print `CUDA UMD Version:` instead of `CUDA Version:`, and refusing to guess left
+// NVIDIA machines on Vulkan.
+function cudaMajorsFor(platform: Platform, gpu: GpuInfo): (number | undefined)[] {
+    if (!gpu.nvidia) {
         return [];
+    }
+
+    if (gpu.cudaMajor === undefined) {
+        return [undefined];
     }
 
     if (gpu.cudaMajor >= 13) {
@@ -353,12 +362,20 @@ export function planBinaries(
 }
 
 export function parseNvidiaSmi(stdout: string): GpuInfo {
-    const match = /CUDA Version:\s*(\d+)(?:\.(\d+))?/.exec(stdout);
+    // Drivers up to ~580 printed `CUDA Version:`, newer ones print `CUDA UMD Version:`; both are
+    // in the same header line as the NVIDIA-SMI version.
+    const match = /CUDA\s+(?:UMD\s+)?Version:\s*(\d+)(?:\.(\d+))?/i.exec(stdout);
 
-    if (!match) {
-        // No header, no driver, or an nvidia-smi too old to report CUDA: treat as no NVIDIA GPU.
-        return { nvidia: false };
+    if (match) {
+        return { nvidia: true, cudaMajor: Number(match[1]) };
     }
 
-    return { nvidia: true, cudaMajor: Number(match[1]) };
+    // The uppercase banner means the tool really ran on an NVIDIA machine and simply did not
+    // report a CUDA version: report the GPU and let planBinaries take the newest CUDA build.
+    // Case matters on purpose, so a "nvidia-smi: command not found" shell error stays negative.
+    if (/NVIDIA-SMI/.test(stdout)) {
+        return { nvidia: true };
+    }
+
+    return { nvidia: false };
 }

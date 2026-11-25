@@ -212,20 +212,85 @@ describe("releases", () => {
         expect(names(plans[0])).toEqual(["llama-b1-bin-win-cuda-13.10-x64.zip"]);
     });
 
-    test("parseNvidiaSmi reads the CUDA version from the header", () => {
+    test("parseNvidiaSmi reads the old `CUDA Version:` header", () => {
         const header = [
             "Mon Nov 24 10:00:00 2026",
             "+-----------------------------------------------------------------------------------------+",
-            "| NVIDIA-SMI 591.74                 Driver Version: 591.74         CUDA Version: 13.3     |",
+            "| NVIDIA-SMI 551.61                 Driver Version: 551.61         CUDA Version: 12.4     |",
+            "|-----------------------------------------+------------------------+----------------------|",
+        ].join("\n");
+
+        expect(parseNvidiaSmi(header)).toEqual({ nvidia: true, cudaMajor: 12 });
+        expect(parseNvidiaSmi("CUDA Version: 13")).toEqual({ nvidia: true, cudaMajor: 13 });
+    });
+
+    test("parseNvidiaSmi reads the new `CUDA UMD Version:` header", () => {
+        // Driver 610.x renamed the field; without this the machine fell back to Vulkan.
+        const header = [
+            "Tue Nov 24 10:00:00 2026",
+            "+-----------------------------------------------------------------------------------------+",
+            "| NVIDIA-SMI 610.88                 KMD Version: 610.88        CUDA UMD Version: 13.3     |",
             "|-----------------------------------------+------------------------+----------------------|",
         ].join("\n");
 
         expect(parseNvidiaSmi(header)).toEqual({ nvidia: true, cudaMajor: 13 });
-        expect(parseNvidiaSmi("CUDA Version: 12.4")).toEqual({ nvidia: true, cudaMajor: 12 });
-        expect(parseNvidiaSmi("CUDA Version: 13")).toEqual({ nvidia: true, cudaMajor: 13 });
+    });
+
+    test("parseNvidiaSmi reports the GPU when the header has no CUDA version", () => {
+        const header = [
+            "+-----------------------------------------------------------------------------------------+",
+            "| NVIDIA-SMI 610.88                 KMD Version: 610.88                                   |",
+            "|-----------------------------------------+------------------------+----------------------|",
+        ].join("\n");
+        const info = parseNvidiaSmi(header);
+
+        expect(info.nvidia).toBe(true);
+        expect(info.cudaMajor).toBeUndefined();
+    });
+
+    test("parseNvidiaSmi stays negative without the nvidia-smi banner", () => {
         expect(parseNvidiaSmi("'nvidia-smi' is not recognized as an internal or external command")).toEqual({
             nvidia: false,
         });
+        expect(parseNvidiaSmi("nvidia-smi: command not found")).toEqual({ nvidia: false });
+        expect(parseNvidiaSmi("segmentation fault")).toEqual({ nvidia: false });
         expect(parseNvidiaSmi("")).toEqual({ nvidia: false });
+    });
+
+    test("planBinaries offers the newest CUDA build when the driver version is unknown", () => {
+        const unknown: GpuInfo = { nvidia: true };
+        const auto = planBinaries(fixtureRelease(), WIN_X64, unknown, { device: "auto", gpuBackend: "auto" });
+        const gpu = planBinaries(fixtureRelease(), WIN_X64, unknown, { device: "gpu", gpuBackend: "auto" });
+        const linux = planBinaries(fixtureRelease(), { os: "linux", arch: "x64" }, unknown, {
+            device: "auto",
+            gpuBackend: "auto",
+        });
+        const vulkanOnly = planBinaries(fixtureRelease(), WIN_X64, unknown, { device: "gpu", gpuBackend: "vulkan" });
+
+        expect(auto.map((plan) => plan.backend)).toEqual(["cuda", "vulkan", "cpu"]);
+        expect(names(auto[0])).toEqual([
+            "llama-b12686-bin-win-cuda-13.5-x64.zip",
+            "cudart-llama-bin-win-cuda-13.5-x64.zip",
+        ]);
+        expect(gpu.map((plan) => plan.backend)).toEqual(["cuda", "vulkan"]);
+        expect(names(linux[0])).toEqual([
+            "llama-b12686-bin-ubuntu-cuda-13.5-x64.tar.gz",
+            "cudart-llama-b12686-bin-ubuntu-cuda-13.5-x64.tar.gz",
+        ]);
+        expect(vulkanOnly.map((plan) => plan.backend)).toEqual(["vulkan"]);
+    });
+
+    test("planBinaries takes the newest build a release actually ships when the version is unknown", () => {
+        const release: Release = {
+            tag: "b1",
+            assets: ["12.4", "12.8"].map((version) => ({
+                name: `llama-b1-bin-win-cuda-${version}-x64.zip`,
+                size: 1,
+                url: `https://example/${version}`,
+            })),
+        };
+        const plans = planBinaries(release, WIN_X64, { nvidia: true }, { device: "gpu", gpuBackend: "cuda" });
+
+        expect(names(plans[0])).toEqual(["llama-b1-bin-win-cuda-12.8-x64.zip"]);
     });
 });
