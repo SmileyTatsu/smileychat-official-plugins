@@ -1,0 +1,26 @@
+import type { PluginManifest } from "../types/smileychat-plugin-api";
+
+export const embeddingsMemoryManifest: PluginManifest = {
+    id: "smiley-embeddings-memory",
+    name: "Smiley Embeddings Memory",
+    version: "0.1.0",
+    description:
+        "Long-chat memory by semantic search: indexes messages and injects the most relevant old fragments into the prompt.",
+    main: "dist/index.js",
+    serverMain: "dist/server.js",
+    minAppVersion: "0.0.6",
+    permissions: [
+        "state:read",
+        "actions",
+        "chat:prompt-inject",
+        "chat:message-update",
+        "ui:settings",
+        "ui:header",
+        "ui:modals",
+        "ui:styles",
+        "storage",
+        "server:process",
+    ],
+    apiVersion: 1,
+    category: "memory-lore",
+};

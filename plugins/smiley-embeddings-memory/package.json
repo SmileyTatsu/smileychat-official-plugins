@@ -1,0 +1,23 @@
+{
+    "name": "smiley-embeddings-memory",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "bun build ./src/index.tsx --outdir ./dist --external preact && bun build ./src/server/main.ts --target bun --format esm --outfile ./dist/server.js",
+        "typecheck": "tsc --noEmit",
+        "test": "bun test",
+        "update-types": "bun ./scripts/update-types.ts",
+        "pack": "bun run build && bun ./scripts/pack.ts"
+    },
+    "dependencies": {
+        "fflate": "^0.8.2"
+    },
+    "devDependencies": {
+        "@types/adm-zip": "latest",
+        "adm-zip": "latest",
+        "bun-types": "latest",
+        "preact": "^10.27.2",
+        "typescript": "latest"
+    }
+}

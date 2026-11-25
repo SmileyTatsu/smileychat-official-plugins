@@ -1,7 +1,7 @@
 # Smiley Embeddings Memory — design
 
-Status: **proposal, awaiting approval** (nothing but this file exists yet).
-Plugin id: `smiley-embeddings-memory`. Folder: `plugins/embeddings-memory/` (the other four plugins drop the `smiley-` prefix in their folder name; rename with `git mv` if a different path is preferred).
+Status: **approved** (decisions of the review are folded in below: `smiley-` folder prefix, the Gemma profile is named `default`, CPU/GPU is a user choice).
+Plugin id: `smiley-embeddings-memory`. Folder: `plugins/smiley-embeddings-memory/` (the other four plugins drop the prefix in their folder name; this one keeps it by request).
 
 Semantic memory for long chats: embed the chat's messages in the background, and on every turn retrieve the most relevant *old* fragments and inject them into the prompt as "memories of past events".
 
@@ -19,7 +19,7 @@ All numbers come from real runs; scratch files live in `%LOCALAPPDATA%\hermes\ca
 
 Decisions that follow:
 
-- **Strong profile: Qwen3-Embedding-4B `Q4_K_M`.** Q8_0 costs 1.7 GB more and retrieves no better here. **Weak/mobile profile: EmbeddingGemma-2 `UD-Q4_K_XL`**: 176 MB, usable on CPU (about 5.5 s to index 100 chunks). Both repos exist (the prompt's doubt about `embeddinggemma-2` was unfounded); both are Apache-2.0.
+- **`default` profile: EmbeddingGemma-2 `UD-Q4_K_XL`** (176 MB, usable on CPU, about 5.5 s to index 100 chunks); it is what the wizard preselects and suits weak machines and phones. **`strong` profile: Qwen3-Embedding-4B `Q4_K_M`** for powerful machines; Q8_0 costs 1.7 GB more and retrieves no better here. Both repos exist (the prompt's doubt about `embeddinggemma-2` was unfounded); both are Apache-2.0.
 - **Pooling is passed explicitly**: `--pooling last` (Qwen3), `--pooling mean` (Gemma). L2 normalisation is already done by `llama-server` (`--embd-normalize 2` default; norm measured 1.000000).
 - **Prefixes** (verbatim from the model cards / `config_sentence_transformers.json`):
   - Qwen3 query: `Instruct: {task}\nQuery:{text}`; document: none. Task default: `Given a chat message, retrieve relevant past events from the same conversation`.
@@ -66,8 +66,8 @@ Routes (all under `/api/plugins/smiley-embeddings-memory/host`, already protecte
 
 | Route | Purpose |
 |---|---|
-| `GET /status` | process state (`stopped/downloading/starting/ready/error`), pid, port, backend, device, layers offloaded/total, model, last used, last error; binary (tag, asset, bytes, path); models with disk bytes; running downloads with progress |
-| `POST /config` | persists `{ binaryPath?, modelPath?, ctx, idleMinutes, ngl, backendPreference }` to `dataDir/config.json` |
+| `GET /status` | process state (`stopped/downloading/starting/ready/error`), pid, port, backend, device requested and used, layers offloaded/total, model, last used, last error; binary (tag, asset, bytes, path); models with disk bytes; running downloads with progress |
+| `POST /config` | persists `{ binaryPath?, modelPath?, ctx, idleMinutes, device: "auto"|"gpu"|"cpu", gpuBackend: "auto"|"cuda"|"vulkan" }` to `dataDir/config.json` |
 | `POST /binary/install`, `POST /binary/cancel`, `DELETE /binary` | llama.cpp download, unzip, delete |
 | `POST /models/download`, `POST /models/cancel`, `DELETE /models/:id` | model files |
 | `POST /embed` | `{ texts: string[] }` → `{ vectors: number[][] }` (starts the process if needed) |
@@ -78,8 +78,9 @@ Security rules: the module only ever executes (a) the `llama-server` it extracte
 Binary selection (`releases.ts`, pure, unit-tested with fixture asset lists):
 
 - Release: default pinned to the tested tag `b12686`; advanced setting accepts `latest` (newest `b####` from `GET /repos/ggml-org/llama.cpp/releases?per_page=30`; **`/releases/latest` is useless**, it returns a `v1.0.0` tag with no binaries).
+- Compute device is a user setting, `auto` (default) / `gpu` / `cpu`, independent of the profile. `cpu` selects the `cpu` build (24 MB) and launches with `-ngl 0`; `gpu` selects the best GPU build for the platform and `-ngl 99` and fails with an actionable error if none can start (no silent CPU fallback); `auto` picks GPU when a GPU build starts and otherwise CPU. Binaries are kept per backend (`dataDir/bin/<tag>/<asset>/`), so switching device downloads the other build once and never deletes the first. A manual binary path is used as given and only `-ngl` changes. Status always shows the device actually used.
 - Windows x64: NVIDIA (`nvidia-smi` reports CUDA ≥ 13) → `cuda-13.5` + `cudart-llama-bin-win-cuda-13.5` (216 + 407 MB); CUDA 12 → `cuda-12.4`; otherwise or by preference → `vulkan` (37 MB); no GPU → `cpu`. Linux: `ubuntu-cuda-12.8/13.5`, `ubuntu-vulkan-x64`, `ubuntu-x64`, `ubuntu-arm64`. macOS: `macos-arm64` (Metal) / `macos-x64`. Android: `android-arm64` exists; manual path remains the supported route on Termux.
-- After install, a start probe: if the chosen backend fails to start, fall back CUDA → Vulkan → CPU and say so in status.
+- After install, a start probe. Under `auto`, if the GPU backend fails to start the module falls back CUDA → Vulkan → CPU and says so in status; under `gpu`, it reports the failure and stops.
 - Download size is checked against the GitHub asset `size`; sha256 against the asset `digest` when present. Models: `.part` file with `Range` resume (verified: HF answers 206 and a resumed file hashes identically), size check, and sha256 against the `lfs.oid` from the HF tree API.
 - ZIP extraction uses a bundled pure-JS unzip (`fflate`) with zip-slip checks; no dependency on `unzip`/`tar` being installed.
 - Idle stop: a timer reset by every `/embed`; default 10 min; `0` = keep running. Cold start budget: the first load of a fresh multi-GB file took 32–36 s here (antivirus scan), so the start timeout is 120 s with a visible "starting" state. `activate()` does no I/O beyond reading config (15 s limit); `dispose()` stops the process and cancels downloads (5 s limit). Spawned via `host.spawn`, so the app kills it on disable, update, uninstall and exit. Short probes (`nvidia-smi`) use `Bun.spawn` with a 5 s timeout, since `host.spawn` exposes no output.
@@ -124,7 +125,7 @@ Query embeddings are cached by text hash (last 32) so swipes and regenerations d
 
 ### 2.6 UI
 
-- **Settings panel**: wizard first (1: source API/local; 2: hardware profile strong/weak, preselected from `nvidia-smi` presence; 3: one button "Install and test" that downloads binary + model, starts, embeds a test sentence, then "Index this chat"). Below it an *Advanced* section with every knob from the brief (model, URL, key, binary/model paths, chunk size and overlap, query messages, top-K, threshold, retain, depth, template, token cap, idle minutes, custom model: HF repo + file or local path + prefix profile). Status block: active model, chunks indexed, index state (up to date / stale / other model), process state, GPU backend and layers offloaded, last error, disk used with delete buttons. **Test** reports vector dimension and latency, with actionable errors (401 → "check the API key", ECONNREFUSED → "endpoint not reachable", HTTP 404 on `/embeddings` → "this server has no embeddings endpoint", dimension mismatch, process failed to start with the last log line). Index all / Re-index with progress bar and Cancel; Purge.
+- **Settings panel**: wizard first (1: source API/local; 2: profile `default`/`strong` and device auto/GPU/CPU, `default` + `auto` preselected; 3: one button "Install and test" that downloads binary + model, starts, embeds a test sentence, then "Index this chat"). Below it an *Advanced* section with every knob from the brief (model, URL, key, binary/model paths, chunk size and overlap, query messages, top-K, threshold, retain, depth, template, token cap, idle minutes, custom model: HF repo + file or local path + prefix profile). Status block: active model, chunks indexed, index state (up to date / stale / other model), process state, GPU backend and layers offloaded, last error, disk used with delete buttons. **Test** reports vector dimension and latency, with actionable errors (401 → "check the API key", ECONNREFUSED → "endpoint not reachable", HTTP 404 on `/embeddings` → "this server has no embeddings endpoint", dimension mismatch, process failed to start with the last log line). Index all / Re-index with progress bar and Cancel; Purge.
 - **Header action → modal** with: last injection (memories, score, source message and position), status, **dry run** (the current composer draft if the snapshot exposes it, otherwise a prefilled text box — to verify), and the log tail. Layout works at 360 px (single column, 44 px touch targets); verified with measurements and screenshots, not assumed.
 - The API key lives in `api.settings` (plain local JSON); stated in the panel and README. `connections:secrets` is not used.
 
