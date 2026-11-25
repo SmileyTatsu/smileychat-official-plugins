@@ -1,0 +1,1519 @@
+/*
+ * Styles for the memory plugin UI (settings panel + viewer modal).
+ *
+ * Every selector is `.sem-` prefixed so nothing here can leak into the app or
+ * another plugin. The surfaces, borders and control rules are copied from the
+ * shared extension language in `smiley-chat-summarizer/src/shared-ui.css` and the
+ * app's own dark tokens (`--surface-*` in src/app/App.css), so this panel reads as
+ * one more card in Options instead of a separate window bolted on:
+ *   #191b21 card · #171a22 note · #15171c recessed · #101218 input
+ *   #303440 border · #262a34 inner line · #ececf1 text · #dfe3ef label
+ *   #9da3b4 muted · #242832 action · #30384a/accent #e1e7ff primary
+ *   #48c774 ok · #f2c94c caution · #eb5757 error · #7e8fb4 focus
+ */
+
+/* ------------------------------------------------------------------ container */
+
+.sem-settings {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+    color: #ececf1;
+}
+
+.sem-settings *,
+.sem-modal * {
+    box-sizing: border-box;
+}
+
+/* -------------------------------------------------------------------- section */
+
+.sem-section {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    border: 1px solid #303440;
+    border-radius: 8px;
+    background: #191b21;
+    padding: 12px;
+}
+
+.sem-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+}
+
+.sem-section-titles {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.sem-section-titles h5 {
+    margin: 0;
+    color: #ececf1;
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.sem-section-titles small {
+    color: #9da3b4;
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+.sem-section-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.sem-section-body {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+/* ---------------------------------------------------------------------- steps */
+
+.sem-step {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    border: 1px solid #262a34;
+    border-radius: 8px;
+    background: #15171c;
+    padding: 12px;
+}
+
+.sem-step-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-step-num {
+    display: inline-grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid #3a4050;
+    border-radius: 999px;
+    background: #20232c;
+    color: #c4cad8;
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.sem-step-head h6 {
+    min-width: 0;
+    margin: 0;
+    color: #ececf1;
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.sem-step-copy {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.sem-step-hint {
+    margin: 0;
+    color: #9da3b4;
+    font-size: 0.78rem;
+    font-weight: 400;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.sem-step-head h6,
+.sem-choice-title,
+.sem-fact-value,
+.sem-metric strong {
+    overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- choice cards */
+
+.sem-choice-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-choice {
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    min-width: 0;
+    min-height: 64px;
+    border: 1px solid #303440;
+    border-radius: 8px;
+    background: #101218;
+    color: #dfe3ef;
+    padding: 10px;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+    transition:
+        border-color 140ms ease,
+        background 140ms ease;
+}
+
+.sem-choice:hover {
+    border-color: #4b5364;
+    background: #191b21;
+}
+
+.sem-choice.is-active {
+    border-color: #58657d;
+    background: #242b3a;
+    box-shadow: inset 0 0 0 1px rgba(126, 143, 180, 0.32);
+}
+
+.sem-choice:focus-visible {
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+    outline-offset: 2px;
+}
+
+.sem-choice-title {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    color: #ececf1;
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.sem-choice-check {
+    flex: 0 0 auto;
+    color: #a9c0ff;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.sem-choice.is-active .sem-choice-title {
+    color: #e1e7ff;
+}
+
+.sem-choice small {
+    color: #9da3b4;
+    font-size: 0.76rem;
+    font-weight: 400;
+    line-height: 1.35;
+}
+
+/* --------------------------------------------------------------------- fields */
+
+.sem-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    min-width: 0;
+}
+
+.sem-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    color: #dfe3ef;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.sem-field-wide,
+.sem-help-wide {
+    grid-column: 1 / -1;
+}
+
+.sem-field-label {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sem-field-label small {
+    color: #9da3b4;
+    font-size: 0.76rem;
+    font-weight: 500;
+}
+
+.sem-field-help {
+    color: #9da3b4;
+    font-size: 0.76rem;
+    font-weight: 400;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.sem-help-wide {
+    margin: 0;
+    color: #9da3b4;
+    font-size: 0.76rem;
+    font-weight: 400;
+    line-height: 1.4;
+}
+
+.sem-field input,
+.sem-field select,
+.sem-field textarea,
+.sem-draft textarea {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid #303440;
+    border-radius: 8px;
+    background: #101218;
+    color: #ececf1;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    font: inherit;
+    font-weight: 500;
+    font-size: 0.84rem;
+}
+
+.sem-field input,
+.sem-field select {
+    min-height: 36px;
+    padding: 0 10px;
+}
+
+.sem-field select {
+    padding-right: 6px;
+    cursor: pointer;
+}
+
+.sem-field textarea {
+    min-height: 84px;
+    padding: 10px;
+    line-height: 1.45;
+    resize: vertical;
+}
+
+.sem-field input:focus-visible,
+.sem-field select:focus-visible,
+.sem-field textarea:focus-visible,
+.sem-draft textarea:focus-visible {
+    border-color: #7e8fb4;
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+}
+
+.sem-field input:disabled,
+.sem-field select:disabled,
+.sem-field textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.sem-mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.78rem;
+}
+
+.sem-field input.sem-mono,
+.sem-field textarea.sem-mono {
+    font-size: 0.8rem;
+}
+
+.sem-input-with-action {
+    position: relative;
+    display: flex;
+    min-width: 0;
+}
+
+.sem-input-with-action input {
+    padding-right: 60px;
+}
+
+.sem-input-action {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    bottom: 3px;
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #9da3b4;
+    padding: 0 8px;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.sem-input-action:hover {
+    background: #242832;
+    color: #ececf1;
+}
+
+.sem-input-action:focus-visible {
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+}
+
+.sem-input-with-unit {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-unit {
+    flex: 0 0 auto;
+    color: #9da3b4;
+    font-size: 0.76rem;
+    font-weight: 500;
+}
+
+/* -------------------------------------------------------------------- buttons */
+
+.sem-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    min-height: 34px;
+    border: 1px solid #303440;
+    border-radius: 8px;
+    background: #242832;
+    color: #ececf1;
+    padding: 0 12px;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+        background 140ms ease,
+        border-color 140ms ease;
+}
+
+.sem-button:hover:not(:disabled) {
+    border-color: #4b5364;
+    background: #2d3340;
+}
+
+.sem-button:focus-visible {
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+    outline-offset: 2px;
+}
+
+.sem-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.sem-button-primary {
+    border-color: #596a8e;
+    background: #3a4763;
+    color: #eef2ff;
+    font-weight: 700;
+}
+
+.sem-button-primary:hover:not(:disabled) {
+    border-color: #6f80a8;
+    background: #45536f;
+}
+
+.sem-button-danger {
+    border-color: rgba(235, 87, 87, 0.45);
+    background: rgba(72, 26, 31, 0.4);
+    color: #ffb4bd;
+}
+
+.sem-button-danger:hover:not(:disabled) {
+    border-color: rgba(235, 87, 87, 0.65);
+    background: rgba(88, 32, 38, 0.55);
+}
+
+.sem-button-ghost {
+    border-color: transparent;
+    background: transparent;
+    color: #9da3b4;
+    padding: 0 8px;
+}
+
+.sem-button-ghost:hover:not(:disabled) {
+    border-color: #303440;
+    background: #242832;
+    color: #ececf1;
+}
+
+.sem-button-wide {
+    width: 100%;
+}
+
+.sem-button-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-section-button {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 0.78rem;
+}
+
+/* --------------------------------------------------------------------- toggle */
+
+.sem-toggle {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+    border-bottom: 1px solid #1e212b;
+    border-radius: 0;
+    background: transparent;
+    color: #dfe3ef;
+    padding: 10px 0;
+    cursor: pointer;
+    transition: background 150ms ease;
+}
+
+.sem-toggle:last-child {
+    border-bottom: none;
+}
+
+.sem-toggle:focus-within {
+    border-color: #1e212b;
+}
+
+.sem-toggle.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.sem-toggle-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.sem-toggle-label {
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.sem-toggle small {
+    color: #9da3b4;
+    font-size: 0.78rem;
+    font-weight: 400;
+    line-height: 1.35;
+}
+
+.sem-toggle input[type="checkbox"] {
+    order: 1;
+    appearance: none;
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    width: 38px;
+    height: 22px;
+    margin: 0;
+    border: 1px solid #3a4050;
+    border-radius: 999px;
+    background: #242832;
+    padding: 2px;
+    cursor: pointer;
+    transition:
+        background 140ms ease,
+        border-color 140ms ease,
+        box-shadow 140ms ease;
+}
+
+.sem-toggle input[type="checkbox"]::before {
+    content: "";
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: #8991a3;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    transform: translateX(0);
+    transition:
+        background 140ms ease,
+        transform 140ms ease;
+}
+
+.sem-toggle input[type="checkbox"]:checked {
+    border-color: #7e8fb4;
+    background: #30384a;
+    box-shadow: 0 0 0 3px rgba(126, 143, 180, 0.16);
+}
+
+.sem-toggle input[type="checkbox"]:checked::before {
+    background: #e1e7ff;
+    transform: translateX(16px);
+}
+
+.sem-toggle input[type="checkbox"]:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(126, 143, 180, 0.32);
+}
+
+/* Inside a notice the toggle is part of the sentence block, not a list row. */
+.sem-note .sem-toggle {
+    border-bottom: none;
+    padding: 2px 0 0;
+}
+
+/* ----------------------------------------------------------------- segmented */
+
+.sem-segmented {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 2px;
+    max-width: 100%;
+    min-width: 0;
+    border: 1px solid #303440;
+    border-radius: 8px;
+    background: #101218;
+    padding: 2px;
+}
+
+.sem-segment {
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #9da3b4;
+    min-height: 30px;
+    padding: 0 12px;
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.sem-segment:hover {
+    background: #1b1e25;
+    color: #ececf1;
+}
+
+.sem-segment.is-active {
+    background: #30384a;
+    color: #e1e7ff;
+}
+
+.sem-segment:focus-visible {
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+    outline-offset: 1px;
+}
+
+.sem-field > .sem-segmented {
+    display: flex;
+    max-width: 340px;
+}
+
+.sem-field > .sem-segmented .sem-segment {
+    flex: 1 1 0;
+    padding: 0 8px;
+}
+
+/* ---------------------------------------------------------------------- chips */
+
+.sem-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    border: 1px solid #333844;
+    border-radius: 999px;
+    background: #20232c;
+    color: #c4cad8;
+    padding: 2px 9px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.sem-chip-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.sem-chip-ok {
+    border-color: rgba(72, 199, 116, 0.3);
+    background: rgba(72, 199, 116, 0.12);
+    color: #a9e0bd;
+}
+
+.sem-chip-warn {
+    border-color: rgba(242, 201, 76, 0.28);
+    background: rgba(242, 201, 76, 0.1);
+    color: #e8cd7a;
+}
+
+.sem-chip-error {
+    border-color: rgba(235, 87, 87, 0.34);
+    background: rgba(235, 87, 87, 0.14);
+    color: #ffb4bd;
+}
+
+/* ---------------------------------------------------------------------- facts */
+
+.sem-facts {
+    display: grid;
+    gap: 0;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #262a34;
+    border-radius: 8px;
+    background: #15171c;
+}
+
+.sem-fact {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    min-width: 0;
+    border-top: 1px solid #1e212b;
+    padding: 8px 10px;
+}
+
+.sem-fact:first-child {
+    border-top: none;
+}
+
+.sem-fact-label {
+    padding-top: 2px;
+    color: #9da3b4;
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.sem-fact-value {
+    min-width: 0;
+    color: #ececf1;
+    font-size: 0.84rem;
+}
+
+.sem-fact-inline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    min-width: 0;
+}
+
+.sem-fact-inline small {
+    color: #9da3b4;
+    font-size: 0.78rem;
+}
+
+.sem-strong {
+    font-weight: 700;
+}
+
+.sem-disk {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sem-disk-row {
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-disk-row > span {
+    color: #dfe3ef;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.sem-disk-row small {
+    color: #9da3b4;
+}
+
+.sem-disk-row .sem-button {
+    min-height: 28px;
+    padding: 0 8px;
+    font-size: 0.76rem;
+}
+
+/* ---------------------------------------------------------------------- notes */
+
+.sem-note {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    border: 1px solid #303440;
+    border-radius: 8px;
+    background: #171a22;
+    color: #c8cedd;
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.sem-note strong {
+    color: #ececf1;
+}
+
+.sem-note-warn {
+    border-color: rgba(244, 185, 94, 0.22);
+    background: rgba(61, 43, 19, 0.24);
+    color: #ffdca3;
+}
+
+.sem-note-warn strong {
+    color: #ffe6b8;
+}
+
+.sem-error {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    border: 1px solid rgba(235, 87, 87, 0.34);
+    border-radius: 8px;
+    background: rgba(72, 26, 31, 0.28);
+    padding: 9px 10px;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.sem-error strong {
+    color: #ffd6dc;
+    font-weight: 700;
+}
+
+.sem-error span {
+    color: #ffb4bd;
+}
+
+.sem-ok {
+    display: block;
+    min-width: 0;
+    border: 1px solid rgba(72, 199, 116, 0.3);
+    border-radius: 8px;
+    background: rgba(72, 199, 116, 0.1);
+    color: #a9e0bd;
+    padding: 9px 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.sem-reason,
+.sem-footnote,
+.sem-collapsed-hint {
+    margin: 0;
+    color: #9da3b4;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.sem-collapsed-hint {
+    font-size: 0.82rem;
+}
+
+.sem-detail {
+    color: inherit;
+    opacity: 0.85;
+}
+
+/* ------------------------------------------------------------------ progress */
+
+.sem-progress {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.sem-progress-track {
+    position: relative;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #242832;
+}
+
+.sem-progress-track span {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: 999px;
+    background: #7e8fb4;
+    transition: width 180ms ease;
+}
+
+.sem-progress-indeterminate span {
+    animation: sem-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes sem-indeterminate {
+    0% {
+        margin-left: -35%;
+    }
+
+    100% {
+        margin-left: 100%;
+    }
+}
+
+.sem-progress-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    min-width: 0;
+    color: #9da3b4;
+    font-size: 0.78rem;
+}
+
+.sem-progress-meta > span {
+    color: #dfe3ef;
+    font-weight: 600;
+}
+
+.sem-progress-meta small {
+    overflow-wrap: anywhere;
+}
+
+.sem-task {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+/* ------------------------------------------------------------------- metrics */
+
+.sem-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-metrics-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.sem-metric {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    border: 1px solid #262a34;
+    border-radius: 8px;
+    background: #15171c;
+    padding: 8px 9px;
+}
+
+.sem-metric > span {
+    color: #9da3b4;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.sem-metric > strong {
+    min-width: 0;
+    overflow: hidden;
+    color: #ececf1;
+    font-size: 0.86rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sem-tone-ok {
+    color: #a9e0bd;
+}
+
+.sem-tone-warn {
+    color: #e8cd7a;
+}
+
+.sem-tone-error {
+    color: #ffb4bd;
+}
+
+.sem-tone-neutral {
+    color: #ececf1;
+}
+
+/* -------------------------------------------------------------------- misc  */
+
+.sem-empty {
+    display: grid;
+    place-items: center;
+    min-height: 140px;
+    border: 1px dashed #303440;
+    border-radius: 8px;
+    color: #9da3b4;
+    padding: 16px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    text-align: center;
+}
+
+/* ------------------------------------------------------------------ advanced */
+
+.sem-advanced {
+    border: 1px solid #303440;
+    border-radius: 8px;
+    background: #191b21;
+}
+
+.sem-advanced > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 40px;
+    border-radius: 8px;
+    color: #dfe3ef;
+    padding: 10px 12px;
+    font-size: 0.86rem;
+    font-weight: 700;
+    list-style: none;
+    cursor: pointer;
+}
+
+.sem-advanced > summary::-webkit-details-marker {
+    display: none;
+}
+
+.sem-advanced > summary::after {
+    content: "▾";
+    color: #9da3b4;
+    font-size: 0.8rem;
+    transition: transform 140ms ease;
+}
+
+.sem-advanced[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.sem-advanced > summary:hover {
+    color: #ececf1;
+}
+
+.sem-advanced > summary:focus-visible {
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+    outline-offset: -2px;
+}
+
+.sem-advanced-body {
+    display: grid;
+    gap: 12px;
+    border-top: 1px solid #262a34;
+    padding: 12px;
+}
+
+.sem-group {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-group h6 {
+    margin: 0;
+    color: #9da3b4;
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.sem-privacy {
+    margin: 0;
+    color: #9da3b4;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------------- modal */
+
+.plugin-modal:has(.sem-modal) {
+    width: min(720px, calc(100vw - 48px));
+    height: auto;
+    max-height: min(760px, calc(100dvh - 48px));
+    min-height: 0;
+}
+
+.plugin-modal:has(.sem-modal) .plugin-modal-body {
+    overflow: hidden;
+    max-height: calc(100dvh - 120px);
+    padding: 12px;
+}
+
+.sem-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: auto;
+    max-height: 100%;
+    min-height: 0;
+    min-width: 0;
+    color: #ececf1;
+}
+
+.sem-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.sem-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.sem-tabs .sem-segment {
+    min-height: 34px;
+}
+
+.sem-tabpanel {
+    flex: 1 1 auto;
+    display: grid;
+    align-content: start;
+    gap: 10px;
+    min-height: 0;
+    min-width: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 2px;
+}
+
+.sem-modal-foot {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-top: 1px solid #262a34;
+    padding-top: 10px;
+}
+
+.sem-modal-hint {
+    min-width: 0;
+    overflow: hidden;
+    color: #9da3b4;
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sem-injection,
+.sem-result,
+.sem-dryrun,
+.sem-status-tab,
+.sem-logs,
+.sem-retrieval,
+.sem-queries,
+.sem-memories {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+.sem-injection-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    min-width: 0;
+    color: #9da3b4;
+    font-size: 0.78rem;
+}
+
+.sem-injection-line {
+    min-width: 0;
+    border: 1px solid #262a34;
+    border-radius: 8px;
+    background: #101218;
+    color: #dfe3ef;
+    padding: 8px 10px;
+    overflow-wrap: anywhere;
+}
+
+.sem-draft {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    color: #dfe3ef;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.sem-draft textarea {
+    min-height: 88px;
+    padding: 10px;
+    line-height: 1.45;
+    resize: vertical;
+}
+
+/* ---------------------------------------------------------------- memories */
+
+.sem-memories {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.sem-memory {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    border: 1px solid #262a34;
+    border-radius: 8px;
+    background: #15171c;
+    padding: 9px 10px;
+}
+
+.sem-memory-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-score {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    border: 1px solid #3a4356;
+    border-radius: 999px;
+    background: #242b3a;
+    color: #d8def0;
+    padding: 1px 8px;
+    font-size: 0.74rem;
+    font-weight: 700;
+}
+
+.sem-memory-ago {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: #9da3b4;
+    font-size: 0.76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sem-memory-toggle {
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #8fb0ff;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.sem-memory-toggle:hover {
+    background: #242832;
+}
+
+.sem-memory-toggle:focus-visible {
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+}
+
+.sem-memory-text {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    color: #dfe3ef;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.sem-memory-text.is-open {
+    display: block;
+    -webkit-line-clamp: unset;
+}
+
+/* ------------------------------------------------------------------ queries */
+
+.sem-queries {
+    gap: 5px;
+}
+
+.sem-label-sm {
+    color: #9da3b4;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.sem-query {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid #262a34;
+    border-left: 2px solid #4b5364;
+    border-radius: 6px;
+    background: #101218;
+    color: #c8cedd;
+    padding: 6px 8px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
+
+/* --------------------------------------------------------------------- logs */
+
+.sem-log-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-log-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sem-level {
+    min-height: 30px;
+    border: 1px solid #303440;
+    border-radius: 999px;
+    background: #101218;
+    color: #9da3b4;
+    padding: 0 10px;
+    font: inherit;
+    font-size: 0.74rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.sem-level.is-active {
+    border-color: #4b5364;
+    background: #242832;
+    color: #ececf1;
+}
+
+.sem-level:not(.is-active) {
+    color: #6f7688;
+    background: transparent;
+}
+
+.sem-level:focus-visible {
+    outline: 2px solid rgba(126, 143, 180, 0.58);
+    outline-offset: 1px;
+}
+
+.sem-log-list {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.sem-log-row {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    border: 1px solid #262a34;
+    border-radius: 8px;
+    background: #15171c;
+    padding: 8px 9px;
+}
+
+.sem-log-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sem-log-time,
+.sem-log-scope {
+    flex: 0 0 auto;
+    font-size: 0.74rem;
+}
+
+.sem-log-time {
+    color: #9da3b4;
+}
+
+.sem-log-scope {
+    color: #8fb0ff;
+}
+
+.sem-log-message {
+    margin: 0;
+    color: #dfe3ef;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+/* -------------------------------------------------------------------- phone */
+
+@media (max-width: 820px) {
+    .plugin-modal:has(.sem-modal) {
+        width: calc(100vw - 16px);
+        height: auto;
+        max-height: calc(100dvh - 16px);
+    }
+
+    .plugin-modal:has(.sem-modal) .plugin-modal-body {
+        max-height: calc(100dvh - 104px);
+    }
+}
+
+@media (max-width: 720px) {
+    .sem-metrics-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .sem-fields,
+    .sem-choice-row {
+        grid-template-columns: 1fr;
+    }
+
+    .sem-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .sem-section {
+        padding: 10px;
+    }
+
+    .sem-step {
+        padding: 10px;
+    }
+
+    .sem-field input,
+    .sem-field select {
+        min-height: 40px;
+    }
+
+    .sem-field textarea {
+        min-height: 96px;
+    }
+
+    .sem-draft textarea {
+        min-height: 104px;
+    }
+
+    .sem-button,
+    .sem-input-action {
+        min-height: 40px;
+    }
+
+    .sem-input-action {
+        top: 2px;
+        right: 2px;
+        bottom: 2px;
+        padding: 0 10px;
+    }
+
+    .sem-input-with-action input {
+        padding-right: 66px;
+    }
+
+    .sem-button-ghost,
+    .sem-button-primary,
+    .sem-button-danger {
+        min-height: 40px;
+    }
+
+    .sem-disk-row .sem-button {
+        min-height: 40px;
+    }
+
+    .sem-segment,
+    .sem-tabs .sem-segment {
+        min-height: 40px;
+    }
+
+    .sem-section-button {
+        min-height: 40px;
+    }
+
+    .sem-toggle {
+        min-height: 44px;
+        padding: 10px 0;
+    }
+
+    .sem-toggle input[type="checkbox"] {
+        width: 40px;
+        height: 24px;
+    }
+
+    .sem-toggle input[type="checkbox"]::before {
+        width: 18px;
+        height: 18px;
+    }
+
+    .sem-toggle input[type="checkbox"]:checked::before {
+        transform: translateX(16px);
+    }
+
+    .sem-level {
+        min-height: 40px;
+    }
+
+    .sem-memory-toggle {
+        min-height: 40px;
+        padding: 0 10px;
+    }
+
+    .sem-choice {
+        min-height: 72px;
+    }
+
+    .sem-fact {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+    }
+}
