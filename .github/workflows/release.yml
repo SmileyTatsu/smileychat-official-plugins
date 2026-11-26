@@ -3,21 +3,89 @@ name: Release artifacts
 # One tag builds every plugin and attaches `<id>-<version>.zip` to a single
 # release. The registry points at those asset URLs, so a tag is the moment a
 # plugin becomes installable.
+#
+# Tags do not have to be made by hand: a push to `main` that changes a plugin
+# manifest is planned against the newest release tag, and when a plugin is new or
+# its version moved forward this workflow mints the next tag itself. The release
+# (and its tag) is created last, after every artifact builds, so a failed build
+# leaves no half-published version behind. Pushing a tag still works and releases
+# exactly what that tag points at.
 on:
     push:
+        branches:
+            - main
         tags:
             - "v*"
+        paths:
+            - "plugins/**"
+            - "scripts/release-plan.mjs"
+            - ".github/workflows/release.yml"
     workflow_dispatch:
+        inputs:
+            tag:
+                description: "Rebuild and re-attach an existing tag instead of planning a new one"
+                required: false
+            force:
+                description: "Release even when no plugin version changed"
+                type: boolean
+                default: false
 
 permissions:
     contents: write
 
-jobs:
-    pack:
-        runs-on: ubuntu-latest
+# Each run publishes one tag; overlapping runs would race for the same version.
+concurrency:
+    group: release
+    cancel-in-progress: false
 
+jobs:
+    plan:
+        runs-on: ubuntu-latest
+        outputs:
+            tag: ${{ steps.plan.outputs.tag }}
+            ref: ${{ steps.plan.outputs.ref }}
+            commit: ${{ steps.plan.outputs.commit }}
+            needs_release: ${{ steps.plan.outputs.needs_release }}
+            body: ${{ steps.plan.outputs.body }}
         steps:
             - uses: actions/checkout@v4
+              with:
+                  # Release tags are the baseline for the version diff.
+                  fetch-depth: 0
+
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Plan the release
+              id: plan
+              env:
+                  INPUT_TAG: ${{ inputs.tag }}
+                  INPUT_FORCE: ${{ inputs.force }}
+              run: |
+                  set -euo pipefail
+                  git fetch --tags --force --quiet origin
+
+                  args=(--github-output "$GITHUB_OUTPUT")
+                  if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+                      # A tag push releases that tag; never plan a version for it.
+                      args+=(--tag "$GITHUB_REF_NAME")
+                  elif [ -n "${INPUT_TAG:-}" ]; then
+                      args+=(--tag "$INPUT_TAG")
+                  elif [ "${INPUT_FORCE:-false}" = "true" ]; then
+                      args+=(--force)
+                  fi
+
+                  bun scripts/release-plan.mjs "${args[@]}"
+
+    pack:
+        needs: plan
+        if: needs.plan.outputs.needs_release == 'true'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.plan.outputs.ref }}
 
             - uses: oven-sh/setup-bun@v2
               with:
@@ -48,9 +116,13 @@ jobs:
                   done
                   ls -la artifacts
 
-            - name: Attach artifacts to the release
+            - name: Publish the release
               uses: softprops/action-gh-release@v2
               with:
+                  tag_name: ${{ needs.plan.outputs.tag }}
+                  target_commitish: ${{ needs.plan.outputs.commit }}
+                  name: ${{ needs.plan.outputs.tag }}
+                  prerelease: ${{ contains(needs.plan.outputs.tag, '-') }}
+                  body: ${{ needs.plan.outputs.body }}
                   files: artifacts/*.zip
                   fail_on_unmatched_files: true
-                  generate_release_notes: true

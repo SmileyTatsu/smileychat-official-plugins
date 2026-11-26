@@ -36,13 +36,29 @@ serves plugin files from the Bun server, so no rebuild of the app is needed.
 
 ## Releasing
 
-Pushing a tag (`v1.0.0`) runs `.github/workflows/release.yml`, which builds every
-plugin, packs one ZIP per plugin and attaches them to the release. The registry
-entry then points at
-`https://github.com/SmileyTatsu/smileychat-official-plugins/releases/download/<tag>/<id>-<version>.zip`.
+Releases are created by CI, not by hand. `.github/workflows/release.yml` builds
+every plugin at a tag, packs one ZIP per plugin and attaches them to a single
+release.
 
-Bump the version in both `plugin.json` and `src/manifest.ts`: the manifest is
-what the app reads at runtime, `plugin.json` is what the installer validates.
+A push to `main` that changes a `plugin.json` is planned against the newest
+release tag (`scripts/release-plan.mjs`). When a plugin is new, or its version
+moved forward, the workflow mints the next tag itself and publishes it:
+
+- new plugin → minor bump (`v1.2.2` → `v1.3.0`)
+- version bump only → patch bump (`v1.2.2` → `v1.2.3`)
+
+A commit that changes no version releases nothing, so docs, refactors and source
+fixes ride along with the next bump. Bump the version in both `plugin.json` and
+`src/manifest.ts`: the manifest is what the app reads at runtime, `plugin.json`
+is what the installer validates and what the planner compares.
+
+Pushing a tag still works and releases exactly what that tag points at. Use
+`workflow_dispatch` with the `tag` input to rebuild an existing release, or with
+`force` to republish without a version change. The release (and its tag) is
+created last, after every artifact builds, so a failed build publishes nothing.
+
+The registry entry then points at
+`https://github.com/SmileyTatsu/smileychat-official-plugins/releases/download/<tag>/<id>-<version>.zip`.
 
 ## Rules
 
