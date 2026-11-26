@@ -1,0 +1,11 @@
+{
+    "id": "smiley-random-tools",
+    "name": "Smiley Random Tools",
+    "version": "1.0.0",
+    "description": "Gives the model fair randomness: weighted picks, dice rolls, shuffles and random numbers.",
+    "main": "dist/index.js",
+    "permissions": ["tools:register"],
+    "apiVersion": 1,
+    "category": "tools",
+    "enabled": true
+}
